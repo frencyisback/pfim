@@ -1,3 +1,5 @@
+<img width="128" height="128" alt="image" src="https://github.com/user-attachments/assets/db0ee512-7941-4d8b-b1fb-03082dbd22a2" />
+
 # 📊 PFIM - Personal Finance & Investment Manager
 
 A local desktop application for tracking personal finances and investment portfolios, and forecasting long-term net worth.
