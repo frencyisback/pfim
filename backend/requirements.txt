@@ -1,0 +1,14 @@
+# PFIM Backend - production dependencies
+
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+sqlalchemy>=2.0,<3.0
+alembic>=1.13,<2.0
+pydantic>=2.6,<3.0
+pydantic-settings>=2.2,<3.0
+python-multipart>=0.0.9
+
+# Financial calculations (FIFO, TWR, XIRR, and forecasts) use Decimal directly
+# in app/finance/. numpy and pandas are unnecessary dependencies.
+# XIRR supports irregular dates, which numpy_financial.irr does not handle
+# (see money_weighted_return).

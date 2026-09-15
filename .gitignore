@@ -1,0 +1,50 @@
+# Python environments and generated files
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-*/
+pytest_tmp*/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# JavaScript dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Local databases, backups, operational state, and logs
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.manifest.json
+.pfim-*
+.safety/
+backups/
+*.log
+!data/.gitkeep
+
+# Signing material
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

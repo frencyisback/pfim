@@ -1,0 +1,27 @@
+PFIM Alembic migrations
+=======================
+
+This directory contains the complete executable schema history.
+``tests/integration/test_migrations_match_models.py`` verifies that a database
+created by all migrations matches the models in ``app/models``.
+
+Run these diagnostic commands from ``backend/`` with the virtual environment
+activated:
+
+  python -m alembic -c alembic.ini heads
+  python -m alembic -c alembic.ini current
+  python -m alembic -c alembic.ini history
+
+A migration changes the database resolved by ``app/config.py``. Before an
+upgrade, stop the backend, check the effective ``DATABASE_URL``, and create a
+consistent, verified backup. For an operational database, use an explicit
+target revision and follow the procedure in ``docs/data-safety.md`` and
+``docs/setup.md`` at the project root.
+
+The FastAPI lifespan compares the database's current heads with the heads
+distributed here using read-only access. A mismatch blocks startup; it never
+automatically runs ``upgrade``, ``stamp``, or ``create_all``.
+
+Do not add columns manually or use ``alembic stamp`` to conceal an unmigrated
+schema. Tests and migration rehearsals must use in-memory SQLite, a temporary
+file, or an explicitly authorized separate copy, never ``data/pfim.db``.
