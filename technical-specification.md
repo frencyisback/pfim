@@ -1,7 +1,7 @@
 # Technical Specification — Personal Finance & Investment Manager (PFIM)
 
 **Document/product specification version:** 1.0  
-**Last revised:** September 12, 2026  
+**Last revised:** November 7, 2026\
 **Status:** living normative specification, application 0.22.0 + `[Unreleased]` changes  
 **Type:** local, single-user web application, accessible only over loopback  
 **Guiding principles:** Sound abstraction · Consistency · Efficiency · Effective documentation
@@ -72,6 +72,7 @@ up by implicitly inventing behavior.
 5. [Functional Modules](#5-functional-modules)
 6. [REST API — Interface Contract](#6-rest-api--interface-contract)
 7. [Frontend — Components and UX](#7-frontend--components-and-ux)
+   - [Security Detail Page](#743-security-detail-page)
 8. [Import/Export and Data Integration](#8-importexport-and-data-integration)
 9. [Financial Calculation Engine](#9-financial-calculation-engine)
 10. [Forecasting Module](#10-forecasting-module)
@@ -979,6 +980,8 @@ CSV imports.
 - Data preview before confirming an import (dry run: no database writes
   until confirmation)
 - Internal API always returning the “latest available price” per security
+- Read-only EUR history for an individual security, with one point per
+  eligible price through today in the browser's local calendar (§7.4.3)
 - **[PLANNED]** Temporal gap reports for active securities
 
 **Delimiter: semicolon (`;`), not comma.** A comma column separator would
@@ -1196,6 +1199,10 @@ GET    /api/v1/portfolio/summary             # Total value, gain, allocation
 industry, country, coupon details, maturity, face value, notes, and active status.
 Ticker, type, currency, and ISIN cannot be changed under the current contract.
 
+`GET /api/v1/securities` returns the current master records. Its optional
+`only_active` parameter defaults to `false`. Security detail reads the
+unfiltered catalogue so the selector includes inactive securities.
+
 ### 6.4 Trades
 
 ```
@@ -1240,6 +1247,13 @@ GET    /api/v1/fx-rates                      # List available rates
 GET    /api/v1/fx-rates/suggest              # Suggest the available rate for a date/currency
 GET    /api/v1/fx-rates/{from}/{to}/{date}   # Specific rate
 ```
+
+`GET /api/v1/prices/{security_id}` returns the full recorded history in
+ascending date order, including any future-dated records. It has no period
+filter or pagination parameters. Security detail reuses this endpoint and
+applies its own presentation cutoff of `date <= today` in the browser's
+local calendar. Its chart reads `price_close_eur` directly. The latest-price
+endpoints use the server's date as their cutoff.
 
 ### 6.7 Performance and Returns
 
@@ -1433,7 +1447,8 @@ The interface uses a **fixed sidebar + main content area** layout:
 │  💸 Cash Flow    │                                              │
 │  📈 Portfolio    │   [Content: charts, tables, forms]            │
 │  🎯 Securities   │                                              │
-│  🎁 Coupons      │                                              │
+│🔎 Security detail│                                              │
+│  🎁 Income       │                                              │
 │  📊 Reports      │                                              │
 │  🔮 Forecasts    │                                              │
 │  ⚙️ Settings     │                                              │
@@ -1444,7 +1459,8 @@ The interface uses a **fixed sidebar + main content area** layout:
 
 Tables displaying persistent data start **collapsed** and expand
 from their headers, keeping pages with several sections compact.
-The two exceptions are Cash Flow and Portfolio, which remain expanded.
+Cash Flow and Portfolio remain expanded. The single selected record on
+Security detail also stays visible as a fixed field/value summary.
 Temporary previews for CSV and price imports also remain expanded and
 preserve file order: they are verification steps rather than records for
 later consultation.
@@ -1569,7 +1585,8 @@ Portfolio summary view: Portfolio answers "how much do I
 hold now?", while Securities answers "what did I buy/sell, and when?".
 
 **Security register section:** add form (ticker, name, type, currency,
-optional ISIN) + table of existing securities, with a "Delete" action
+optional ISIN, sector, industry and country) + table of existing securities
+showing those fields and active status, with a "Delete" action
 (explicit confirmation; blocked with 409 if the security has linked trades/income events).
 
 The selectable **instrument types** are: Stock, Bond, **Equity
@@ -1637,6 +1654,32 @@ The preview distinguishes the net amount in that currency from its EUR equivalen
 Missing or invalid inputs do not become an apparent zero; withholding equal
 to the gross amount legitimately produces a net amount of zero. Backend validation
 and rounding remain authoritative.
+
+### 7.4.3 Security Detail Page
+
+**[IMPLEMENTED — Unreleased]** The **Security detail** sidebar entry follows
+Securities and opens `/security-detail`. Users select a security by ticker
+and name. The selector includes inactive securities and records without an
+open position.
+
+**Security record** shows Ticker, Name, ISIN, Type, Currency, Sector,
+Industry, Country and Status. The table uses the catalogue's shared type
+labels and displays “—” for an unfilled field.
+
+**Recorded prices (EUR)** shows one point per valid saved price for the
+selected security through today in the browser's local calendar. The
+horizontal axis preserves calendar spacing. Each tooltip displays the
+saved date, the stored EUR unit price (`price_close_eur`, up to six
+decimal places), and its source. Dates without observations stay empty.
+
+A single point is visible with a date and price summary. The page handles
+empty, loading and failed requests separately, and reports the count of
+omitted invalid observations. The selected security record stays visible
+if its price history fails to load. Only observations for the current
+selection may appear on the chart.
+
+The page uses the existing read APIs (§6.3 and §6.6), database schema and
+backup format. [Security detail guide](docs/security-detail.md)
 
 ### 7.5 Reports Page
 
@@ -2788,6 +2831,7 @@ pfim/
 │   ├── csv-formats.md
 │   ├── finance-calculations.md
 │   ├── multi-currency.md
+│   ├── security-detail.md
 │   ├── data-safety.md
 │   └── risk-register.md
 │
@@ -2823,6 +2867,8 @@ is now as follows.
 
 ### `[Unreleased]` Changes — [IMPLEMENTED]
 
+- Added Security detail after Securities for read-only consultation of the
+  selected catalogue record and its observed EUR prices through today (§7.4.3)
 - Removed legacy OHLCV fields from the `prices` model through an Alembic
   migration, with tests for row preservation and schema-to-model alignment
 - Applied the leaf rule: any category without children is assignable,

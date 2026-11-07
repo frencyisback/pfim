@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch, apiFetchFormData } from "./client";
 
 export interface Price {
@@ -84,6 +84,25 @@ export async function confirmPriceImport(file: File): Promise<PriceImportResult>
   const fd = new FormData();
   fd.append("file", file);
   return apiFetchFormData<PriceImportResult>("/prices/import", fd);
+}
+
+/** Read the existing history contract. Dates and the EUR-only display belong
+ * to the view: the endpoint also returns future observations for other uses.
+ * Keeping the security in the cache key prevents cross-security responses;
+ * consuming the signal cancels requests when the selection changes. */
+export function priceHistoryQueryOptions(securityId: number | null) {
+  return queryOptions({
+    queryKey: ["prices", securityId, "history"],
+    queryFn: ({ signal }) => securityId === null
+      ? Promise.resolve<Price[]>([])
+      : apiFetch<Price[]>(`/prices/${securityId}`, { signal }),
+    enabled: securityId !== null,
+    retry: false,
+  });
+}
+
+export function usePriceHistory(securityId: number | null) {
+  return useQuery(priceHistoryQueryOptions(securityId));
 }
 
 export function useLatestPrice(securityId: number | null) {

@@ -195,6 +195,16 @@ the database/manifest pair on separate, protected storage.
 
 ## Crash-Safe Restore
 
+### Security Detail Compatibility
+
+The [Security detail page](security-detail.md) reads the existing
+`securities` and `prices` records. A backup eligible before this frontend
+update remains eligible under the same rules. Restore requires a verified
+database/manifest pair at the configured Alembic revision and checks the
+candidate's integrity before replacing the database.
+
+### Enabling Restore
+
 Restore is a high-impact maintenance feature and remains disabled by default.
 Intentionally enabling it requires all of:
 
