@@ -453,6 +453,17 @@ latest prices with a single `GET /prices/latest`, avoiding a request per
 row. The endpoint applies today's cutoff: preparatory future quotes remain
 readable in history but are not shown as current prices.
 
+### 6.1 Observed Unit Prices on Security Detail
+
+Security detail reads one selected security's history in one request.
+Each observation provides an EUR **unit price** in `price_close_eur`
+at the six-decimal precision fixed on entry. Portfolio valuation uses
+`price_close × fx_rate × quantity` before rounding the aggregate.
+
+The price chart plots each recorded unit price against its calendar date
+through local today. Only dates with an observation contribute a point.
+[Security detail guide](security-detail.md)
+
 ---
 
 ## 7. Capital Gains Tax — One Calculation

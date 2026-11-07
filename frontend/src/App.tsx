@@ -7,6 +7,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const CashFlow = lazy(() => import("./pages/CashFlow"));
 const Portfolio = lazy(() => import("./pages/Portfolio"));
 const Securities = lazy(() => import("./pages/Securities"));
+const SecurityDetail = lazy(() => import("./pages/SecurityDetail"));
 const IncomeEvents = lazy(() => import("./pages/IncomeEvents"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Forecasts = lazy(() => import("./pages/Forecasts"));
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { to: "/cashflow", label: "💸 Cashflow" },
   { to: "/portfolio", label: "📈 Portfolio" },
   { to: "/securities", label: "🎯 Securities" },
+  { to: "/security-detail", label: "🔎 Security detail" },
   { to: "/income-events", label: "🎁 Income" },
   { to: "/reports", label: "📊 Reports" },
   { to: "/forecasts", label: "🔮 Forecasts" },
@@ -53,6 +55,7 @@ export default function App() {
             <Route path="/cashflow" element={<CashFlow />} />
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/securities" element={<Securities />} />
+            <Route path="/security-detail" element={<SecurityDetail />} />
             <Route path="/income-events" element={<IncomeEvents />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/forecasts" element={<Forecasts />} />

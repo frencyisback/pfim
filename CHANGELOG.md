@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — security detail (November 7, 2026)
+
+- **Security detail** follows **Securities** in the sidebar. Select any
+  active or inactive security to view its nine catalogue fields and the
+  unit prices recorded through today in the browser's local calendar.
+- The chart plots each stored EUR price at its actual date and leaves gaps
+  between observations. Hover over a point to see its date, EUR price and
+  source. Invalid observations are counted and omitted.
+- The page reads the existing catalogue and price history. It uses the
+  existing database schema, backup format and restore procedure.
+  [Security detail guide](docs/security-detail.md)
+
+Validation on Windows, November 7, 2026: **834 backend tests and 275
+frontend tests passed**, including an API read and backup/restore round trip
+on a temporary SQLite database. ESLint and the TypeScript/Vite production
+build passed. Browser checks covered sparse USD history displayed in EUR,
+future dates, inactive securities, empty history and a €0.000001 observation.
+
 ### Changed — average savings rate (September 12, 2026)
 
 - The average savings rate now applies P5–P95 winsorization to calculable

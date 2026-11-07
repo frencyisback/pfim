@@ -8,6 +8,7 @@ A local desktop application for tracking personal finances and investment portfo
 
 - ✅ **Cash Flow Tracking**: Categorized income and expenses
 - ✅ **Portfolio Management**: Purchases, sales, coupons and dividends using FIFO
+- ✅ **Security Detail**: Read-only security records and observed price history in euros
 - ✅ **Financial Calculations**: TWR, MWR/IRR, Total Return, Yield on Cost
 - ✅ **Multiple Currencies**: Amounts entered with their currency and exchange rate, converted to euros on entry ([how it works](docs/multi-currency.md))
 - ✅ **CSV Import**: Configurable imports from banks and brokers
@@ -33,6 +34,7 @@ account to a cash account, then add your transactions and investment activity.
 | **Cashflow** | Income/expenses with date, account, category, amount and description; CSV imports and transfers. | Your transaction history, filtered by account, category or period. |
 | **Portfolio** | Automatically uses your trades and prices. | Current holdings, invested capital, valuations and realised/unrealised gains or losses. |
 | **Securities** | Security details, trades (date, account, quantity, price and fees), prices and recurring costs. | Your security catalogue, latest quotes and trading/cost history. |
+| **Security detail** | Select any security from the catalogue, including inactive securities. | Its current record and all valid recorded EUR prices through today, plotted at their actual dates. |
 | **Income** | Coupons, dividends or capital repayments: security, account, payment date, gross amount and tax withheld. | Recorded investment income and net amounts received. |
 | **Reports** | Select a period; add or manage tax entries when needed. | Net worth, returns, income/spending breakdowns, costs, taxes, CSV exports and backup/restore tools. |
 | **Forecasts** | Starting capital, time horizon, monthly income/expenses and growth/return assumptions. | Net worth projections and comparisons of saved scenarios. |
@@ -206,6 +208,7 @@ There are two environment-variable templates, one for each side:
 | [docs/risk-register.md](docs/risk-register.md) | Open, contained and closed risks, evidence and remaining operational issues |
 | [docs/multi-currency.md](docs/multi-currency.md) | Conversion on entry |
 | [docs/finance-calculations.md](docs/finance-calculations.md) | FIFO, TWR, IRR and projection implementation choices |
+| [docs/security-detail.md](docs/security-detail.md) | Security detail fields, observed EUR price history and compatibility boundaries |
 | [docs/csv-formats.md](docs/csv-formats.md) | Import file formats |
 | [ADR/](ADR/) | Architectural decisions and their rationale |
 | [technical-specification.md](technical-specification.md) | Complete functional specification |

@@ -204,6 +204,10 @@ authoritative for validation, precision, and conversion when saving.
 - **Detail rows** (transactions, trades, prices, coupons) show the declared
   amount alongside its equivalent: `$210.00 (€193.20)`.
 - **Totals, KPIs, and charts** are always in euros only.
+- **Security detail** plots the stored unit `price_close_eur` for every
+  quotation currency. This preserves the conversion fixed when the
+  observation was recorded. The page reports and excludes missing or invalid
+  EUR values. [Security detail guide](security-detail.md)
 - Positions show two return percentages, and their difference is
   informative: the **euro** return is the actual experienced return
   (including exchange-rate effects); the **native** return isolates price movement.
