@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — Costs and Taxation, security prices and setup
+
+- The report now estimates capital-gains tax on open positions at both ends
+  of the selected period. A projected cost-impact KPI includes the change
+  in that estimate and in unrealised earnings, alongside the realised
+  fiscal figures. Missing quotes identify the affected tickers.
+  [Calculation and example](docs/finance-calculations.md#tax-on-unrealised-gains)
+- Security detail connects consecutive recorded EUR price markers with
+  straight lines. Each tooltip corresponds to a recorded observation.
+- Fresh setups enable verified backup and restore in `backend/.env` and
+  pin the expected schema revision. Existing installations can copy the
+  three backup settings from `backend/.env.example` and restart the backend.
+  [Setup](docs/setup.md#crash-safe-restore)
+
 ### Added — security detail (November 7, 2026)
 
 - **Security detail** follows **Securities** in the sidebar. Select any

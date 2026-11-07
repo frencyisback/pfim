@@ -35,9 +35,11 @@ rate changes later. [Currency conversion on entry](multi-currency.md)
 
 The chart includes prices recorded on or before **today in the browser's
 local calendar**. It refreshes the cutoff when the local date changes and
-when the user returns to the page. Dots are spaced by elapsed
-calendar time. Prices on June 1 and June 10 produce two dots, with the
-intervening dates left empty.
+when the user returns to the page. Dots are spaced by elapsed calendar time.
+Straight segments connect consecutive dots. Prices on June 1 and June 10
+produce two dots joined by one segment. The dates in between have no
+observations or tooltips. The line begins at the first quote and ends at
+the last one.
 
 Hover over a dot to see its date, exact stored EUR unit price (up to six
 decimal places), and source. The source distinguishes manual entry, CSV
@@ -76,6 +78,8 @@ revision. [Restore compatibility](data-safety.md#security-detail-compatibility)
 
 - Date boundaries, sparse history and EUR decimal precision are covered by
   the [price history tests](../frontend/src/lib/securityPriceHistory.test.ts).
+- The [chart tests](../frontend/src/components/securities/SecurityPriceHistoryChart.test.tsx)
+  check the geometry of the segments across gaps and the single-dot display.
 - Selection changes and cache refresh after edits or restore are covered
   by the [query tests](../frontend/src/api/priceHistory.test.ts).
 - Read-only requests and the backup/restore cycle are exercised with a

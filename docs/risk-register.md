@@ -58,7 +58,7 @@ table complements this register.
 
 | ID | Status | Priority | Current mitigation | Main residual risk |
 |---|---|---:|---|---|
-| R-01 | CLOSED IN THE REPOSITORY | P0 | Opt-in restore with a gate, OS locks, journal and startup recovery | Operational availability, copies on separate storage and manual intervention when recovery is not deterministic |
+| R-01 | CLOSED IN THE REPOSITORY | P0 | Operator-confirmed restore with a gate, OS locks, journal and startup recovery | Operational availability, copies on separate storage and manual intervention when recovery is not deterministic |
 | R-02 | CLOSED IN THE REPOSITORY | P0 | Verified online snapshot, hash and manifest | Copies on separate storage remain an operational responsibility |
 | R-03 | CLOSED | P1 | Loopback, Host/Origin checks and a capability on every mutation | Does not protect against a malicious local process and is not authentication |
 | R-04 | CLOSED | P1 | Explicit transactions, `BEGIN IMMEDIATE` and busy handling | SQLite remains single-writer and may report contention explicitly |
@@ -126,9 +126,9 @@ mixed state.
 
 ### Mitigation and Evidence
 
-- Restore is disabled by default and requires `RESTORE_ENABLED`, enabled
-  backups and the expected Alembic revision together. The API exposes its
-  effective state.
+- The setup template enables both maintenance features and pins the build
+  revision. Restore requires both flags and the expected Alembic revision.
+  The API exposes its effective state.
 - The maintenance gate blocks new requests and waits for active requests to
   finish. The instance lock excludes a second backend or the offline CLI,
   while the operation lock serializes backup, restore and recovery.
@@ -685,6 +685,9 @@ in the period.
 - Averages weight intervals between change dates without materializing every
   day. Required data is preloaded, and the SQL budget remains constant as
   the number of securities increases.
+- The projected cost KPI compares the change in open-position estimated
+  tax with earnings over the same period. A sale releases the opening
+  estimate. Missing quotes are disclosed and suppress dependent metrics.
 - The current stamp-duty estimate is separate from groups, totals, net
   results and ratios; tax amounts below one cent are settled using
   `ROUND_HALF_UP`.
@@ -763,8 +766,8 @@ alternative.
 The operational responsibilities below are separate from repository defect
 fixes and do not establish the condition of any real financial data.
 
-1. **Keep restore disabled by default** and enable it only with an explicit
-   revision, hash and operational procedure.
+1. **Check restore configuration at deployment** and use a verified backup,
+   the build's exact revision and the confirmed hash for each restore.
 2. **Establish copying to separate storage** for the backup/manifest pair
    and periodic verification on isolated media; this is R-02's operational
    residual risk.
@@ -792,8 +795,8 @@ fixes and do not establish the condition of any real financial data.
 - An inactive security remains readable but accepts no new writes;
   deactivation requires zero quantity in every investment account as of
   today, no historical deficit and no future trade or income payment.
-- Restore is not ordinary CRUD: it remains opt-in and uses only ADR 006's
-  crash-safe maintenance protocol or the equivalent offline CLI.
+- Each restore requires explicit confirmation and uses ADR 006's crash-safe
+  maintenance protocol or the equivalent offline CLI.
 
 ## Technical References
 

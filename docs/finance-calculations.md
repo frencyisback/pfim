@@ -461,7 +461,8 @@ at the six-decimal precision fixed on entry. Portfolio valuation uses
 `price_close × fx_rate × quantity` before rounding the aggregate.
 
 The price chart plots each recorded unit price against its calendar date
-through local today. Only dates with an observation contribute a point.
+through local today. Straight lines connect successive points. Only dates
+with an observation have a price marker or tooltip.
 [Security detail guide](security-detail.md)
 
 ---
@@ -617,6 +618,47 @@ incurred in the period. It appears separately in
 `current_stamp_duty_estimate` only when the interval includes today and no
 actual stamp duty already exists in the current year. It does not enter
 groups, `total_costs`, net result or cost ratios.
+
+### Tax on unrealised gains
+
+The JSON field `unrealized_tax` gives two estimates in EUR. The opening
+snapshot values the positions held at the close of the day before the
+interval. The closing snapshot values those held at the close of
+`period_to`. An empty starting portfolio has a zero balance.
+
+For each date, PFIM values the remaining FIFO quantity of each security
+using the last recorded quote on or before that date and its stored EUR
+exchange rate. It subtracts the remaining EUR FIFO cost, then sums gains
+and losses across open securities. The estimated tax is the positive part
+of this sum multiplied by the configured capital-gains rate, rounded to
+cents (half up). Both dates use the same rate from Settings. This scenario
+assumes a sale of all open positions at those prices. It excludes future
+trading fees, offsets against realised losses and tax-loss carryforwards.
+A missing quote on any open security makes that snapshot's monetary
+figures unavailable. The report identifies the affected tickers. With no
+open positions the net gain and estimated tax are both zero.
+
+| Period measure | Calculation |
+| --- | --- |
+| Change in estimated tax | Closing estimate − opening estimate |
+| Projected period costs | Reported period costs + change in estimated tax |
+| Gross economic result | Realised gross result + closing unrealised gain/loss − opening unrealised gain/loss |
+| Projected cost impact | 100 × projected period costs / gross economic result, when the result is positive |
+
+For example, ten shares bought for €100 each and valued at €120 have an
+unrealised gain of €200. At a configured rate of 26%, estimated tax is
+€52. With no opening position and €4 in recorded fees, projected costs are
+€56 and projected cost impact is 28% of €200. If all ten shares sell for
+€120 the following period, the realised result includes the €200 gain and
+the closing tax estimate falls to zero. Its €52 release offsets the €52
+realised tax in that period's projection. With no further earnings or
+costs, the gross economic result is zero and the percentage is unavailable.
+A reserve release can also produce a negative projected cost amount.
+
+The closing estimate creates no tax event. Its balance and period change
+are excluded from the realised fiscal position, the itemised cost CSV and
+historical gross/net TWR. A missing opening or closing valuation also
+makes the period projection unavailable.
 
 ## 10. Income Statement and Average Savings
 

@@ -46,23 +46,30 @@ describe("observed price chart", () => {
     expect(html).toContain('aria-label="Recorded EUR prices: 1 observation.');
     expect(html).toContain("0,000001");
     expect(html.match(/class="recharts-symbols"/g)).toHaveLength(1);
+    expect(html).not.toContain("recharts-scatter-line");
     expect(html).not.toContain("NaN");
     expect(html).not.toContain("Infinity");
   });
 
-  it("plots only recorded points on a time axis and does not draw an interpolated line", () => {
+  it("joins consecutive recorded dots with straight segments across sparse calendar dates", () => {
     const html = render([
-      point("2026-01-01", "10"), point("2026-01-02", "15"), point(today, "20"),
+      point("2026-01-01", "10"), point("2026-01-02", "25"), point(today, "20"),
     ]);
     expect(html.match(/class="recharts-symbols"/g)).toHaveLength(3);
     expect(html).toContain("3 recorded prices");
     expect(html).toContain('aria-label="Recorded EUR prices: 3 observations.');
     expect(html).toContain("Recorded prices (EUR)");
-    expect(html).not.toContain("recharts-scatter-line");
-    expect(html).not.toContain("recharts-line-curve");
-    const xCoordinates = [...html.matchAll(/cx="([\d.]+)"/g)].map((match) => Number(match[1]));
-    expect(xCoordinates).toHaveLength(3);
-    expect(xCoordinates[1] - xCoordinates[0]).toBeLessThan((xCoordinates[2] - xCoordinates[1]) / 100);
+    const dots = [...html.matchAll(/cx="([\d.]+)" cy="([\d.]+)"/g)];
+    const path = html.match(/recharts-scatter-line"><path[^>]* d="([^"]+)"/)?.[1] ?? "";
+    expect(path).toMatch(/^M[\d.,]+L[\d.,]+L[\d.,]+$/);
+    const vertices = [...path.matchAll(/[ML]([\d.]+),([\d.]+)/g)];
+    expect(dots).toHaveLength(3);
+    vertices.forEach((vertex, index) => {
+      expect(Number(vertex[1])).toBeCloseTo(Number(dots[index][1]), 2);
+      expect(Number(vertex[2])).toBeCloseTo(Number(dots[index][2]), 2);
+    });
+    const [firstX, nextX, lastX] = dots.map((dot) => Number(dot[1]));
+    expect(nextX - firstX).toBeLessThan((lastX - nextX) / 100);
   });
 
   it("continues to show usable data while explaining omitted observations", () => {

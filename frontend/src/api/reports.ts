@@ -245,11 +245,29 @@ export interface FiscalPosition {
   dividend_withholding: string;
 }
 
+export interface UnrealizedTaxSnapshot {
+  as_of: string | null;
+  open_positions: number;
+  missing_price_tickers: string[];
+  net_unrealized_eur: string | null;
+  estimated_tax_eur: string | null;
+}
+
+export interface UnrealizedTaxProjection {
+  opening: UnrealizedTaxSnapshot;
+  closing: UnrealizedTaxSnapshot;
+  tax_change_eur: string | null;
+  economic_gross_result_eur: string | null;
+  projected_period_costs_eur: string | null;
+  projected_cost_impact_pct: string | null;
+}
+
 export interface CostsAnalysisReport {
   period_from: string | null;
   period_to: string | null;
   realized: RealizedResult;
   fiscal: FiscalPosition;
+  unrealized_tax: UnrealizedTaxProjection;
   total_costs: string;
   total_estimated: string;
   groups: CostGroup[];

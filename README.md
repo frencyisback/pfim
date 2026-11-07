@@ -34,11 +34,17 @@ account to a cash account, then add your transactions and investment activity.
 | **Cashflow** | Income/expenses with date, account, category, amount and description; CSV imports and transfers. | Your transaction history, filtered by account, category or period. |
 | **Portfolio** | Automatically uses your trades and prices. | Current holdings, invested capital, valuations and realised/unrealised gains or losses. |
 | **Securities** | Security details, trades (date, account, quantity, price and fees), prices and recurring costs. | Your security catalogue, latest quotes and trading/cost history. |
-| **Security detail** | Select any security from the catalogue, including inactive securities. | Its current record and all valid recorded EUR prices through today, plotted at their actual dates. |
+| **Security detail** | Select any security from the catalogue, including inactive securities. | Its current record and a line connecting recorded EUR prices through today, with a point on each observation date. |
 | **Income** | Coupons, dividends or capital repayments: security, account, payment date, gross amount and tax withheld. | Recorded investment income and net amounts received. |
 | **Reports** | Select a period; add or manage tax entries when needed. | Net worth, returns, income/spending breakdowns, costs, taxes, CSV exports and backup/restore tools. |
 | **Forecasts** | Starting capital, time horizon, monthly income/expenses and growth/return assumptions. | Net worth projections and comparisons of saved scenarios. |
 | **Settings** | Accounts with opening dates/balances, categories, tax rates, exchange rates and CSV mappings. | The configuration used by entry forms, imports and calculations. |
+
+In **Reports → Costs and Taxation**, the closing estimate shows the tax on
+net gains in open positions at the configured rate. The projected cost KPI
+compares period costs plus the change in that estimate with period earnings
+including the change in unrealised gains. A missing quote is flagged.
+[Calculation and example](docs/finance-calculations.md#tax-on-unrealised-gains)
 
 ## 🏗️ Technology Stack
 
@@ -395,9 +401,11 @@ or `CAPABILITY_INVALID`. CORS makes security and maintenance errors readable
 from allowed origins. Network or maintenance errors do not trigger another
 automatic write.
 
-Backup and restore are disabled by default. Backup becomes available only
-with `BACKUP_ENABLED=true` and `EXPECTED_ALEMBIC_REVISION` set to the exact
-build revision. It uses the SQLite Online Backup API to take a consistent
+New installations enable backup and restore in `backend/.env`. Setup copies
+`backend/.env.example`, which sets `BACKUP_ENABLED=true`, `RESTORE_ENABLED=true`
+and the build's `EXPECTED_ALEMBIC_REVISION`. For an existing installation,
+compare those three settings with the template and restart the backend after
+editing the file. Backup uses the SQLite Online Backup API to take a consistent
 snapshot while the application is in use. It publishes the file and its
 manifest only after integrity, foreign-key, revision and SHA-256 checks.
 Keep the backup database and manifest together, and copy them to separate
@@ -420,7 +428,7 @@ idempotent `request_id` and the confirmed SHA-256. Its status remains available
 through the `restore-operations` endpoint. The same protocol is available
 offline with the backend stopped through `scripts/restore.ps1`; it does not
 bypass live database validation or the mandatory pre-restore backup. See
-[Setup](docs/setup.md#crash-safe-restore-opt-in),
+[Setup](docs/setup.md#crash-safe-restore),
 [Data Safety](docs/data-safety.md#crash-safe-restore) and
 [ADR 006](ADR/006-restore-sqlite-crash-safe.md).
 
@@ -548,7 +556,7 @@ another process is keeping a connection open:
 
 Restore is not a solution to a lock. Do not enable or run it to bypass open
 connections: first resolve the process holding the file. If recovery is
-actually needed, use only the opt-in procedure documented in
+actually needed, follow the verified restore procedure documented in
 [Data Safety](docs/data-safety.md), never manually copy over the live database.
 
 Always build the schema with Alembic, never with `Base.metadata.create_all()`:

@@ -52,9 +52,11 @@ from app.schemas.report import (
     SecuritiesByCurrency,
     SecuritiesByType,
     SecurityPositionItem,
+    UnrealizedTaxProjection,
+    UnrealizedTaxSnapshot,
 )
 from app.services.account_service import AccountService
-from app.services.performance_service import PerformanceService
+from app.services.performance_service import PerformanceService, PortfolioValuation
 from app.services.portfolio_cost_service import COST_TYPE_LABELS
 from app.services.portfolio_service import PortfolioService
 from app.services.tax_settings_service import TaxSettingsService
@@ -62,6 +64,10 @@ from app.utils.date_ranges import validate_date_range
 from app.utils.errors import ValidationErrorPFIM
 
 _CENT = Decimal("0.01")
+
+
+def _capital_gains_tax(gain: Decimal, rate: Decimal) -> Decimal:
+    return (max(gain, Decimal("0")) * rate / 100).quantize(_CENT, rounding=ROUND_HALF_UP)
 
 
 def withholding_eur(event) -> Decimal:
@@ -890,11 +896,7 @@ class ReportService:
         net = capital_gains + capital_losses  # Capital losses are negative.
 
         rate = self.tax_settings_service.get_rate("capital_gains_tax_rate")
-        gross_estimated = (
-            (net * rate / 100).quantize(_CENT, rounding=ROUND_HALF_UP)
-            if net > 0
-            else Decimal("0.00")
-        )
+        gross_estimated = _capital_gains_tax(net, rate)
 
         already_withheld_raw = sum(
             (
@@ -933,10 +935,9 @@ class ReportService:
     def costs_analysis(
         self, date_from: dt.date | None = None, date_to: dt.date | None = None
     ) -> CostsAnalysisReport:
-        """Cost and tax analysis. Compare realized gross results with taxes, operational charges
-        and recurring costs. Capital-gains tax comes only from fiscal_position on offset net
-        gains. All sections use the same effective cutoff, no later than today, exposed as
-        period_to.
+        """Compare realized gross results with period costs and taxes on realized net gains.
+        Project the tax on open gains separately, using the same FIFO valuations as the
+        period's cost ratios. Every section ends at period_to, no later than today.
         """
         validate_date_range(date_from, date_to)
         today = dt.date.today()
@@ -1088,11 +1089,33 @@ class ReportService:
             + [event.event_date for event in tax_events]
         )
         effective_from = date_from or (min(activity_dates) if activity_dates else None)
-        impact, end_portfolio_value = self._cost_impact(
+        opening_date = (
+            effective_from - dt.timedelta(days=1)
+            if effective_from is not None and effective_from > dt.date.min
+            else None
+        )
+        change_dates = {effective_to}
+        if effective_from is not None:
+            change_dates.add(effective_from)
+            change_dates.update(t.date for t in trades)
+            change_dates.update(p.date for p in all_prices if p.date >= effective_from)
+        valuations = self.performance_service.portfolio_valuations(
+            change_dates | ({opening_date} if opening_date else set()),
+            include_same_day_trades=True,
+            trades=all_trades,
+            prices=all_prices,
+        )
+        end_portfolio_value = valuations[effective_to].value
+        unrealized_tax = self._unrealized_tax_projection(
+            opening_date, effective_to, valuations, fiscal.tax_rate_pct, total_costs, realized
+        )
+        impact = self._cost_impact(
             total_costs,
             realized,
             effective_from,
             effective_to,
+            valuations=valuations,
+            change_dates=sorted(change_dates),
             trades=all_trades,
             income_events=all_income_events,
             recurring_costs=all_recurring,
@@ -1139,7 +1162,53 @@ class ReportService:
             groups=groups,
             net_result=realized.gross_result - total_costs,
             impact=impact,
+            unrealized_tax=unrealized_tax,
             current_stamp_duty_estimate=current_stamp_duty_estimate,
+        )
+
+    def _unrealized_tax_projection(
+        self,
+        opening_date: dt.date | None,
+        closing_date: dt.date,
+        valuations: dict[dt.date, PortfolioValuation],
+        rate: Decimal,
+        period_costs: Decimal,
+        realized: RealizedResult,
+    ) -> UnrealizedTaxProjection:
+        securities = self._securities_by_id()
+
+        def snapshot(day: dt.date | None) -> UnrealizedTaxSnapshot:
+            position = valuations[day] if day is not None else PortfolioValuation()
+            missing = sorted(securities[ident].ticker for ident in position.cost_fallbacks)
+            gain = None if missing else position.value - position.invested
+            return UnrealizedTaxSnapshot(
+                as_of=day,
+                open_positions=position.open_positions,
+                missing_price_tickers=missing,
+                net_unrealized_eur=gain,
+                estimated_tax_eur=None if gain is None else _capital_gains_tax(gain, rate),
+            )
+
+        opening = snapshot(opening_date)
+        closing = snapshot(closing_date)
+        tax_change = projected_costs = gross_result = impact = None
+        if opening.estimated_tax_eur is not None and closing.estimated_tax_eur is not None:
+            # An earlier estimate is released when its lots are sold. Adding only the
+            # change keeps the same gains from entering both realized and open tax costs.
+            tax_change = closing.estimated_tax_eur - opening.estimated_tax_eur
+            projected_costs = period_costs + tax_change
+            gross_result = (
+                realized.gross_result + closing.net_unrealized_eur - opening.net_unrealized_eur
+            )
+            if gross_result > 0:
+                impact = projected_costs / gross_result * 100
+        return UnrealizedTaxProjection(
+            opening=opening,
+            closing=closing,
+            tax_change_eur=tax_change,
+            projected_period_costs_eur=projected_costs,
+            economic_gross_result_eur=gross_result,
+            projected_cost_impact_pct=impact,
         )
 
     def _estimated_stamp_duty(self, portfolio_value: Decimal) -> Decimal:
@@ -1157,16 +1226,17 @@ class ReportService:
         period_start: dt.date | None,
         period_end: dt.date,
         *,
+        valuations: dict[dt.date, PortfolioValuation],
+        change_dates: list[dt.date],
         trades: list,
         income_events: list,
         recurring_costs: list,
         costs_by_trade: dict[int, Decimal],
         prices: list,
-    ) -> tuple[CostImpact, Decimal]:
+    ) -> CostImpact:
         period_days = None
         average_invested = None
         average_portfolio_value = None
-        end_portfolio_value = Decimal("0")
 
         if period_start is not None and period_start <= period_end:
             period_days = (period_end - period_start).days + 1
@@ -1174,34 +1244,19 @@ class ReportService:
             # Value stays constant between successive trades/prices. Weighting these intervals yields
             # the daily period average without materializing thousands of dates.
             #
-            change_dates = {period_start, period_end}
-            change_dates.update(
-                trade.date for trade in trades if period_start <= trade.date <= period_end
-            )
-            change_dates.update(
-                price.date for price in prices if period_start <= price.date <= period_end
-            )
-            ordered_dates = sorted(change_dates)
-            values, invested = self.performance_service.portfolio_value_and_invested_series(
-                ordered_dates,
-                include_same_day_trades=True,
-                trades=trades,
-                prices=prices,
-            )
             weighted_value = Decimal("0")
             weighted_invested = Decimal("0")
-            for index, date in enumerate(ordered_dates):
+            for index, date in enumerate(change_dates):
                 next_date = (
-                    ordered_dates[index + 1]
-                    if index + 1 < len(ordered_dates)
+                    change_dates[index + 1]
+                    if index + 1 < len(change_dates)
                     else period_end + dt.timedelta(days=1)
                 )
                 weight = Decimal((next_date - date).days)
-                weighted_value += values[date] * weight
-                weighted_invested += invested[date] * weight
+                weighted_value += valuations[date].value * weight
+                weighted_invested += valuations[date].invested * weight
             average_portfolio_value = weighted_value / Decimal(period_days)
             average_invested = weighted_invested / Decimal(period_days)
-            end_portfolio_value = values[period_end]
 
         pct_of_invested = (
             (total_costs / average_invested * 100)
@@ -1232,17 +1287,14 @@ class ReportService:
             (twr_gross - twr_net) * 100 if twr_gross is not None and twr_net is not None else None
         )
 
-        return (
-            CostImpact(
-                pct_of_invested=pct_of_invested,
-                pct_of_gross_result=pct_of_gross,
-                annual_incidence_pct=annual_incidence,
-                average_invested_capital=average_invested,
-                average_portfolio_value=average_portfolio_value,
-                period_days=period_days,
-                twr_gross=twr_gross,
-                twr_net=twr_net,
-                twr_drag_pct_points=drag,
-            ),
-            end_portfolio_value,
+        return CostImpact(
+            pct_of_invested=pct_of_invested,
+            pct_of_gross_result=pct_of_gross,
+            annual_incidence_pct=annual_incidence,
+            average_invested_capital=average_invested,
+            average_portfolio_value=average_portfolio_value,
+            period_days=period_days,
+            twr_gross=twr_gross,
+            twr_net=twr_net,
+            twr_drag_pct_points=drag,
         )
