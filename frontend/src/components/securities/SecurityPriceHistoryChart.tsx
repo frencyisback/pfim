@@ -72,8 +72,8 @@ export default function SecurityPriceHistoryChart({ points, invalidCount = 0, to
     <section aria-labelledby="security-price-history-title" className="rounded-lg border border-gray-200 bg-white p-4">
       <h3 id="security-price-history-title" className="font-medium">Recorded prices (EUR)</h3>
       <p className="mt-1 text-xs text-gray-500">
-        Saved euro prices through {formatSecurityPriceDate(cutoff)}. Each point is a recorded observation;
-        gaps have no prices. Values include the exchange rate saved with each observation.
+        Each dot is a recorded EUR price through {formatSecurityPriceDate(cutoff)}, using the exchange
+        rate saved on entry. Straight lines connect consecutive observations. Only dots have a quoted price.
       </p>
       {invalidCount > 0 && (
         <p role="alert" className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -116,7 +116,15 @@ export default function SecurityPriceHistoryChart({ points, invalidCount = 0, to
                   name="Price (EUR)"
                 />
                 <Tooltip content={<SecurityPriceTooltip />} cursor={{ strokeDasharray: "3 3" }} />
-                <Scatter name="Recorded EUR price" data={points} fill="#2563eb" isAnimationActive={false} line={false} />
+                <Scatter
+                  name="Recorded EUR price"
+                  data={points}
+                  fill="#2563eb"
+                  line={points.length > 1}
+                  lineType="joint"
+                  lineJointType="linear"
+                  isAnimationActive={false}
+                />
               </ScatterChart>
             </ResponsiveContainer>
           </div>

@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -38,6 +39,14 @@ from app.schemas.performance import (
 from app.schemas.report import PortfolioValuationFallback, PortfolioValuationMetadata
 from app.utils.currency import to_eur
 from app.utils.errors import NotFoundError, ValidationErrorPFIM
+
+
+@dataclass
+class PortfolioValuation:
+    value: Decimal = Decimal("0")
+    invested: Decimal = Decimal("0")
+    open_positions: int = 0
+    cost_fallbacks: list[int] = field(default_factory=list)
 
 
 class PerformanceService:
@@ -303,18 +312,14 @@ class PerformanceService:
             ),
         )
 
-    def _portfolio_value_and_invested_series_details(
+    def portfolio_valuations(
         self,
         dates: Iterable[dt.date],
         *,
         include_same_day_trades: bool,
         trades: list | None = None,
         prices: list | None = None,
-    ) -> tuple[
-        dict[dt.date, Decimal],
-        dict[dt.date, list[int]],
-        dict[dt.date, Decimal],
-    ]:
+    ) -> dict[dt.date, PortfolioValuation]:
         """Value all positions in EUR on every requested date in one pass. With
         include_same_day_trades=False, value immediately before that day's trades for TWR.
         Fall back to remaining FIFO cost when no price exists. Load trades and prices once and
@@ -323,7 +328,7 @@ class PerformanceService:
         """
         sorted_dates = sorted(set(dates))
         if not sorted_dates:
-            return {}, {}, {}
+            return {}
 
         trades_by_security: dict[int, list] = defaultdict(list)
         # The cursor still applies each as_of cutoff. Both reads intentionally have no global
@@ -339,9 +344,7 @@ class PerformanceService:
         for price in all_prices:
             prices_by_security[price.security_id].append(price)
 
-        totals: dict[dt.date, Decimal] = {d: Decimal("0") for d in sorted_dates}
-        invested_totals: dict[dt.date, Decimal] = {d: Decimal("0") for d in sorted_dates}
-        cost_fallbacks: dict[dt.date, list[int]] = {d: [] for d in sorted_dates}
+        valuations = {day: PortfolioValuation() for day in sorted_dates}
 
         for security_id, trades in trades_by_security.items():
             prices = prices_by_security.get(security_id, [])
@@ -365,17 +368,20 @@ class PerformanceService:
                 quantity = tracker.quantity
                 if quantity <= 0:
                     continue
-                invested_totals[as_of] += tracker.total_invested
+                snapshot = valuations[as_of]
+                snapshot.open_positions += 1
+                cost = tracker.total_invested
+                snapshot.invested += cost
                 if last_price is not None:
-                    totals[as_of] += (
+                    snapshot.value += (
                         to_eur(Decimal(last_price.price_close), Decimal(last_price.fx_rate))
                         * quantity
                     )
                 else:
-                    totals[as_of] += tracker.total_invested
-                    cost_fallbacks[as_of].append(security_id)
+                    snapshot.value += cost
+                    snapshot.cost_fallbacks.append(security_id)
 
-        return totals, cost_fallbacks, invested_totals
+        return valuations
 
     def portfolio_value_series_details(
         self, dates: Iterable[dt.date], *, include_same_day_trades: bool
@@ -384,10 +390,13 @@ class PerformanceService:
         invested capital for period reports; this wrapper preserves the existing public
         contract for other callers.
         """
-        totals, cost_fallbacks, _ = self._portfolio_value_and_invested_series_details(
+        valuations = self.portfolio_valuations(
             dates, include_same_day_trades=include_same_day_trades
         )
-        return totals, cost_fallbacks
+        return (
+            {day: v.value for day, v in valuations.items()},
+            {day: v.cost_fallbacks for day, v in valuations.items()},
+        )
 
     def portfolio_value_and_invested_series(
         self,
@@ -401,13 +410,16 @@ class PerformanceService:
         optionally using data already loaded by the report, so daily averages do not add
         queries as the period grows.
         """
-        values, _, invested = self._portfolio_value_and_invested_series_details(
+        valuations = self.portfolio_valuations(
             dates,
             include_same_day_trades=include_same_day_trades,
             trades=trades,
             prices=prices,
         )
-        return values, invested
+        return (
+            {day: v.value for day, v in valuations.items()},
+            {day: v.invested for day, v in valuations.items()},
+        )
 
     def portfolio_value_series(
         self, dates: Iterable[dt.date], *, include_same_day_trades: bool
@@ -634,18 +646,20 @@ class PerformanceService:
         closing_dates = candidate_open_dates | {initial_start, period_end}
         pre_flow_dates = relevant_flow_dates | {initial_start}
 
-        closing, _, _ = self._portfolio_value_and_invested_series_details(
+        closing_values = self.portfolio_valuations(
             closing_dates,
             include_same_day_trades=True,
             trades=all_trades,
             prices=prices,
         )
-        pre_flow, _, _ = self._portfolio_value_and_invested_series_details(
+        pre_flow_values = self.portfolio_valuations(
             pre_flow_dates,
             include_same_day_trades=False,
             trades=all_trades,
             prices=prices,
         )
+        closing = {day: v.value for day, v in closing_values.items()}
+        pre_flow = {day: v.value for day, v in pre_flow_values.items()}
 
         # If the portfolio already existed at the requested opening, include that day's flows.
         # Otherwise, start the calculation at the first position-creating trade, as for cumulative

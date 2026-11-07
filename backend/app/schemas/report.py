@@ -313,6 +313,27 @@ class CostImpact(BaseModel):
     twr_drag_pct_points: Decimal | None
 
 
+class UnrealizedTaxSnapshot(BaseModel):
+    """EUR gain and hypothetical tax if all remaining FIFO lots were sold at their last quotes."""
+
+    as_of: dt.date | None
+    open_positions: int
+    missing_price_tickers: list[str]
+    net_unrealized_eur: Decimal | None
+    estimated_tax_eur: Decimal | None
+
+
+class UnrealizedTaxProjection(BaseModel):
+    """Period impact includes only the change between the two hypothetical tax balances."""
+
+    opening: UnrealizedTaxSnapshot
+    closing: UnrealizedTaxSnapshot
+    tax_change_eur: Decimal | None
+    economic_gross_result_eur: Decimal | None
+    projected_period_costs_eur: Decimal | None
+    projected_cost_impact_pct: Decimal | None
+
+
 class CostsAnalysisReport(BaseModel):
     """Costs and taxes: financial-instrument expenses and their impact on performance."""
 
@@ -325,6 +346,7 @@ class CostsAnalysisReport(BaseModel):
     groups: list[CostGroup]
     net_result: Decimal
     impact: CostImpact
+    unrealized_tax: UnrealizedTaxProjection
     # Annual estimate as of today, separate from actual costs or taxes accrued during the
     # selected period.
     current_stamp_duty_estimate: CostItem | None = None

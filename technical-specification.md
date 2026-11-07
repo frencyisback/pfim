@@ -149,8 +149,7 @@ and verifiable calculations using decimal arithmetic.
 uses an internal documented and tested solver. Alembic versions migrations,
 but does not itself guarantee a risk-free rollback: a verified backup is
 required before upgrading or downgrading. Application restore is a separate,
-opt-in maintenance procedure and is not an automatic rollback implied by
-this precaution (§6.12).
+maintenance procedure with explicit confirmation (§6.12).
 
 SQLite is an architectural choice for the local profile. A possible move to
 PostgreSQL would require at least a review of queries, types, concurrency,
@@ -1364,8 +1363,10 @@ GET    /api/v1/security/capability           # Volatile token for all mutations
 GET    /api/v1/health                        # Service health
 ```
 
-Backup creation is disabled by default and requires
-`BACKUP_ENABLED=true` plus the exact `EXPECTED_ALEMBIC_REVISION`. It uses SQLite Online
+New installations copy `backend/.env.example` to `backend/.env`. The
+template enables backup creation with `BACKUP_ENABLED=true` and pins
+`EXPECTED_ALEMBIC_REVISION` to the build's head. Setup preserves an
+existing configuration. Backup uses SQLite Online
 Backup with a read-only source, `.partial` staging, `integrity_check`,
 `foreign_key_check`, revision verification, SHA-256, a manifest, and atomic
 publication. The database and manifest form an inseparable pair that should also be
@@ -1394,9 +1395,8 @@ clean up only that invocation's staging files, without publishing an incomplete
 copy or automatically retrying it. The limit does not guarantee a strict maximum
 time for operating-system I/O, verification, `fsync`, or restore.
 
-Application restore is disabled by default. It becomes eligible only
-with `RESTORE_ENABLED=true`, `BACKUP_ENABLED=true`, and the
-exact `EXPECTED_ALEMBIC_REVISION`. The candidate must be a modern backup
+The setup template also sets `RESTORE_ENABLED=true`. Restore requires
+both feature flags and the exact `EXPECTED_ALEMBIC_REVISION`. The candidate must be a modern backup
 with a verified manifest, a SHA-256 confirmed by the caller, and the same revision
 as the build; legacy backups and backups from another revision cannot be
 restored.
@@ -1670,7 +1670,9 @@ labels and displays “—” for an unfilled field.
 selected security through today in the browser's local calendar. The
 horizontal axis preserves calendar spacing. Each tooltip displays the
 saved date, the stored EUR unit price (`price_close_eur`, up to six
-decimal places), and its source. Dates without observations stay empty.
+decimal places), and its source. Straight segments join successive
+observations across gaps. Only saved observations have a marker and a
+tooltip. A segment supplies no intermediate daily price.
 
 A single point is visible with a date and price summary. The page handles
 empty, loading and failed requests separately, and reports the count of
@@ -2631,6 +2633,21 @@ reference against which to interpret costs.
 - **Return drag**: difference in percentage points between TWR before and
   after costs (§9.3)
 
+**Open-position tax projection.** The additive JSON field `unrealized_tax`
+reports opening and closing net unrealised P&L, estimated tax in EUR and
+any unpriced tickers. At each cutoff, the estimate applies the configured
+rate to positive net open gains across securities using observed quotes,
+their stored FX rates and remaining EUR FIFO basis. Both snapshots use the
+current configured rate. Period projections use the day before the start
+as the opening cutoff and the effective end as the closing cutoff.
+
+The projected cost-impact KPI divides period costs plus the change in
+estimated tax by realised gross result plus the change in unrealised P&L.
+It is expressed as a percentage only for a positive denominator. Missing
+prices on open positions make the affected snapshot and dependent metrics
+unavailable. Realised fiscal entries, the itemised CSV and historical TWR
+retain their existing scope. [Worked example](docs/finance-calculations.md#tax-on-unrealised-gains)
+
 The report exposes `average_invested_capital`, `average_portfolio_value`,
 and `period_days`. Realized results, taxes, costs, averages, and TWR share
 the same effective interval; a `date_to` beyond today is capped at today,
@@ -2759,7 +2776,7 @@ before considering frontend integration covered.
   for the application and the database/manifest pair passes hash, integrity,
   foreign key, and revision checks. The SQLite Online Backup API is the
   only supported internal path; a raw copy of the live file is not supported.
-- Restore remains disabled by default and fails closed if any of
+- Setup enables restore. The backend fails closed if any of
   `RESTORE_ENABLED`, enabled backups, or the expected revision is missing.
   When enabled, it uses the crash-safe protocol in ADR 006: quiescence,
   system lock, pre/post verification, pre-restore backup, staging and swap
@@ -2869,6 +2886,9 @@ is now as follows.
 
 - Added Security detail after Securities for read-only consultation of the
   selected catalogue record and its observed EUR prices through today (§7.4.3)
+- Connected dated observations in Security detail, enabled backup and restore
+  in the setup template and added a separate open-position tax estimate and
+  period cost-impact KPI to Costs and Taxes (§11.6).
 - Removed legacy OHLCV fields from the `prices` model through an Alembic
   migration, with tests for row preservation and schema-to-model alignment
 - Applied the leaf rule: any category without children is assignable,
@@ -2900,7 +2920,7 @@ is now as follows.
 - Introduced import limits and pagination, explicit SQLite transactions,
   and writer serialization to protect FIFO and aggregate invariants
 - Added an HTTP boundary with a capability, a default development database,
-  verified online backup with a manifest, and opt-in crash-safe restore:
+  verified online backup with a manifest, and operator-confirmed crash-safe restore:
   gates, interprocess locking, a durable journal, startup recovery, and an
   offline CLI
 - Pinned runtimes and locks: hashed `pylock.toml` for Windows, `npm ci`, and

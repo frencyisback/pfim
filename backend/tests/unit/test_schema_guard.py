@@ -11,7 +11,9 @@ from alembic import command
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
+from app.config import Settings
 from app.schema_guard import (
+    BACKEND_DIR,
     SchemaCompatibilityError,
     code_alembic_heads,
     database_alembic_heads,
@@ -48,6 +50,20 @@ def _sidecars(path: Path) -> set[Path]:
 
 def test_code_head_is_the_exact_distributed_alembic_head():
     assert code_alembic_heads() == (HEAD,)
+
+
+def test_setup_config_enables_backup_and_restore_at_the_shipped_head(monkeypatch):
+    for name in ("BACKUP_ENABLED", "RESTORE_ENABLED", "EXPECTED_ALEMBIC_REVISION"):
+        monkeypatch.delenv(name, raising=False)
+
+    configured = Settings(_env_file=BACKEND_DIR / ".env.example")
+    assert configured.backup_enabled and configured.restore_enabled
+    assert (configured.expected_alembic_revision,) == code_alembic_heads()
+
+    unconfigured = Settings(_env_file=None)
+    assert not unconfigured.backup_enabled
+    assert not unconfigured.restore_enabled
+    assert not unconfigured.expected_alembic_revision
 
 
 def test_mismatch_is_read_only_and_never_calls_upgrade(tmp_path, monkeypatch):

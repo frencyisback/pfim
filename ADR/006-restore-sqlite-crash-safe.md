@@ -1,7 +1,7 @@
 # ADR 006: Crash-safe SQLite restore with maintenance and a durable journal
 
 **Status:** Accepted  
-**Last contract verification against code:** 2026-09-10
+**Last contract verification against code:** 2026-11-07
 
 ## Context
 
@@ -20,11 +20,12 @@ backup is mandatory.
 
 ## Decision
 
-Restore remains disabled by default. It is available only when
-`RESTORE_ENABLED=true`, `BACKUP_ENABLED=true`, and
-`EXPECTED_ALEMBIC_REVISION` identifies exactly the single head shipped with
-the build. No fallback migrates, stamps, or accepts different revisions
-during restore.
+Fresh installations copy `backend/.env.example` with `RESTORE_ENABLED=true`,
+`BACKUP_ENABLED=true` and `EXPECTED_ALEMBIC_REVISION` pinned to the single
+head shipped with the build. Setup preserves existing environment files.
+Without the flags and expected revision the service fails closed. Every
+restore independently checks the revision of the live database and the
+candidate.
 
 The API and offline CLI delegate to the same protocol:
 
@@ -129,8 +130,8 @@ permit a deterministic decision, startup fails closed with
   be restored with the current build. A present, invalid manifest blocks download.
 - The offline CLI permits controlled maintenance with the backend stopped
   and recovers any pending journal before the guard. It bypasses neither
-  live database validation nor the mandatory pre-restore backup; explicit
-  opt-in configuration, a hash, and confirmation are still required.
+  live database validation nor the mandatory pre-restore backup. Enabled
+  flags, a matching configured revision, a hash and confirmation are required.
 - Antivirus software, synchronization, or external processes holding SQLite
   handles can cause quiescence or rename to fail. The protocol fails before
   commit or preserves the journal for recovery, without forcing file loss.

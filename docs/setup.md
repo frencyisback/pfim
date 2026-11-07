@@ -50,7 +50,7 @@ From the project root:
 # Verified online backup; no need to stop the application
 .\scripts\backup.ps1
 
-# Crash-safe offline restore; requires a stopped backend, opt-in and manifest hash
+# Crash-safe offline restore requires a stopped backend and the manifest hash.
 .\scripts\restore.ps1 -Filename <backup.db> -ExpectedSha256 <sha256>
 ```
 
@@ -88,8 +88,8 @@ constrained by `constraints-tested-win-py314.txt`:
 
 ```bash
 make install
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
+test -f backend/.env || cp backend/.env.example backend/.env
+test -f frontend/.env || cp frontend/.env.example frontend/.env
 
 # Check backend/.env before this command
 make migrate
@@ -203,19 +203,27 @@ Check that http://localhost:5173 displays the application.
 
 ## Verified Online Backup
 
-Backup and restore are fail-closed by default. To enable backup creation,
-configure these settings intentionally:
+A fresh setup copies the backup and restore settings from
+`backend/.env.example` into `backend/.env`. Both operations are enabled
+for the schema shipped with that build. Python's virtual environment is a
+separate directory. A backend started without a configuration file or
+environment overrides keeps both operations disabled.
+
+Setup preserves an existing `backend/.env`. To enable both operations on
+an existing installation at the same schema revision, copy just these
+three entries from the **matching build's** template into that file and
+restart the backend. Keep your existing `DATABASE_URL`.
 
 ```dotenv
 BACKUP_ENABLED=true
-EXPECTED_ALEMBIC_REVISION=<exact revision shipped with the build>
-# Copy-loop limit: integer from 1 to 600 seconds; default 60
-BACKUP_COPY_TIMEOUT_SECONDS=60
+RESTORE_ENABLED=true
+EXPECTED_ALEMBIC_REVISION=d7b2e9f4a6c1
 ```
 
-Do not copy a value found in a database into this document: the expected
-revision belongs to the build and must be set in its environment. Read the
-effective status through `GET /api/v1/backup/status`.
+Check availability on the Backup page. To read the effective flags and
+revision, use `GET /api/v1/backup/status`. Environment variables take
+precedence over the file. The expected revision comes from the build's
+migration chain.
 
 `make backup`, `scripts/backup.ps1` and `POST /api/v1/backup` use the same
 service. The snapshot is taken through the SQLite Online Backup API even
@@ -258,15 +266,16 @@ the manifest is truly absent and all other checks pass. A present but invalid
 manifest, including a directory or dangling link, blocks download. Modern
 download always requires a valid manifest.
 
-## Crash-Safe Restore (Opt-In)
+<a id="crash-safe-restore-opt-in"></a>
 
-Restore remains disabled by default. It is available only when all three
-settings are intentionally configured and consistent:
+## Crash-Safe Restore
+
+Fresh installations include the required flags and expected revision
+described in [Verified Online Backup](#verified-online-backup). Set
+`RESTORE_ENABLED=false` in `backend/.env` to disable restore while keeping
+backup creation available. The following settings control the time limits.
 
 ```dotenv
-BACKUP_ENABLED=true
-RESTORE_ENABLED=true
-EXPECTED_ALEMBIC_REVISION=<exact revision shipped with the build>
 # Allowed range: 1–300 seconds; default 30
 RESTORE_QUIESCE_TIMEOUT_SECONDS=30
 # Pre-restore backup copy-loop limit: 1–600 seconds; default 60
@@ -290,6 +299,16 @@ An item returned by `GET /api/v1/backup` can be restored only if
 and different revisions remain ineligible; `restore_ineligible_reason`
 explains why. Before confirming, note the filename and SHA-256 displayed by
 the catalog/manifest.
+
+### Restore a Backup in a Fresh Installation
+
+1. Start PFIM with the target database initialized at this build's revision.
+2. Copy the original `pfim_backup_….db` and its matching `*.manifest.json`
+   into the directory containing the database selected by `DATABASE_URL`
+   (`data/` with the shipped template). Keep both backup filenames intact.
+3. Open **Reports → Backup** and choose **Restore** on the verified
+   backup. Review the SHA-256 and enter the displayed confirmation.
+   PFIM creates a verified backup of the current database before replacing it.
 
 ### Restore Through the Local API
 

@@ -12,6 +12,8 @@ import {
   type CostImpact,
   type DateRange,
   type FiscalPosition,
+  type UnrealizedTaxProjection,
+  type UnrealizedTaxSnapshot,
 } from "@/api/reports";
 import ExportCsvButton from "@/components/common/ExportCsvButton";
 import KpiCard, { Formula } from "@/components/common/KpiCard";
@@ -50,6 +52,11 @@ const COST_TYPE_LABELS: Record<string, string> = {
   account_fee: "Custody account fee",
   other: "Other",
 };
+
+const taxRateFormat = new Intl.NumberFormat("en-GB", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
 
 /** Costs and taxation (specification §11.6). Distinguishes realised gross
  * performance from the costs reducing it, making net earnings clear. */
@@ -181,7 +188,7 @@ export function CostsAnalysisTab() {
               </div>
               <div className="flex flex-col justify-center gap-3">
                 <KpiCard
-                  label="Total costs"
+                  label="Total incurred costs"
                   value={formatEur(Number(data.total_costs))}
                   positive={false}
                   formula={
@@ -192,7 +199,7 @@ export function CostsAnalysisTab() {
                   }
                 />
                 <KpiCard
-                  label="Net result (gross − costs)"
+                  label="Net realised result"
                   value={formatEur(Number(data.net_result))}
                   positive={Number(data.net_result) >= 0}
                   formula={
@@ -226,7 +233,8 @@ export function CostsAnalysisTab() {
             <CostGroupTable key={g.group} group={g} />
           ))}
 
-          <ImpactMetrics impact={data.impact} />
+          <UnrealizedTaxBlock projection={data.unrealized_tax} rate={data.fiscal.tax_rate_pct} />
+          <ImpactMetrics impact={data.impact} projection={data.unrealized_tax} />
 
           <section className="rounded-lg border border-gray-200 bg-white p-4">
             <TaxEventsSection range={range} />
@@ -247,7 +255,7 @@ function FiscalPositionBlock({ fiscal }: { fiscal: FiscalPosition }) {
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-4">
-      <h3 className="mb-1 text-sm font-medium text-gray-600">Capital gains tax</h3>
+      <h3 className="mb-1 text-sm font-medium text-gray-600">Tax on realised capital gains</h3>
       <p className="mb-3 max-w-3xl text-xs text-gray-400">
         Capital losses <strong>offset</strong> capital gains: the rate applies to the net amount, rather than each gain separately.
       </p>
@@ -263,7 +271,7 @@ function FiscalPositionBlock({ fiscal }: { fiscal: FiscalPosition }) {
           strong
         />
         <FiscalRow
-          label={`Tax at ${Number(fiscal.tax_rate_pct).toFixed(2)}%`}
+          label={`Tax at ${taxRateFormat.format(Number(fiscal.tax_rate_pct))}%`}
           value={-Number(fiscal.gross_estimated_tax)}
         />
         {hasWithheld && (
@@ -307,6 +315,64 @@ function FiscalRow({
       <span className={strong ? "text-gray-800" : "text-gray-500"}>{label}</span>
       <span className={amount < 0 ? "text-red-600" : "text-gray-800"}>{formatEur(amount)}</span>
     </div>
+  );
+}
+
+function eurOrDash(value: string | null) {
+  return value === null ? "—" : formatEur(Number(value));
+}
+
+function UnrealizedTaxBlock({
+  projection,
+  rate,
+}: {
+  projection: UnrealizedTaxProjection;
+  rate: string;
+}) {
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4">
+      <h3 className="mb-1 text-sm font-medium text-gray-600">Estimated tax on open positions</h3>
+      <p className="mb-3 max-w-3xl text-xs text-gray-600">
+        A sale of all open holdings at their last recorded prices would incur an estimated
+        {" "}{taxRateFormat.format(Number(rate))}% tax on any net gain over their remaining FIFO cost.
+        Open losses offset open gains. Each valuation uses prices available by the date shown.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-b border-gray-200 text-left text-xs text-gray-500">
+            <tr>
+              <th scope="col" className="p-2">Valuation</th>
+              <th scope="col" className="p-2 text-right">Open positions</th>
+              <th scope="col" className="p-2 text-right">Net unrealised gain or loss</th>
+              <th scope="col" className="p-2 text-right">Estimated tax</th>
+            </tr>
+          </thead>
+          <tbody>
+            <TaxSnapshotRow label="Opening" snapshot={projection.opening} />
+            <TaxSnapshotRow label="Closing" snapshot={projection.closing} />
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function TaxSnapshotRow({ label, snapshot }: { label: string; snapshot: UnrealizedTaxSnapshot }) {
+  return (
+    <tr className="border-b border-gray-100 align-top">
+      <th scope="row" className="p-2 text-left font-medium">
+        {label}
+        <span className="block text-xs font-normal text-gray-500">{snapshot.as_of ?? "Start of records"}</span>
+        {snapshot.missing_price_tickers.length > 0 && (
+          <span className="block text-xs font-normal text-amber-800">
+            Missing EUR valuation for {snapshot.missing_price_tickers.join(", ")}.
+          </span>
+        )}
+      </th>
+      <td className="p-2 text-right">{snapshot.open_positions}</td>
+      <td className="p-2 text-right">{eurOrDash(snapshot.net_unrealized_eur)}</td>
+      <td className="p-2 text-right font-medium">{eurOrDash(snapshot.estimated_tax_eur)}</td>
+    </tr>
   );
 }
 
@@ -389,13 +455,13 @@ function CostGroupTable({ group }: { group: CostGroup }) {
   );
 }
 
-function ImpactMetrics({ impact }: { impact: CostImpact }) {
+function ImpactMetrics({ impact, projection }: { impact: CostImpact; projection: UnrealizedTaxProjection }) {
   const drag = impact.twr_drag_pct_points;
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <h3 className="mb-1 text-sm font-medium text-gray-600">Impact on performance</h3>
-      <p className="mb-3 text-xs text-gray-400">
-        The effect of costs, viewed from four perspectives.
+      <p className="mb-3 text-xs text-gray-600">
+        Period costs include recorded costs and estimated tax still payable on realised gains.
       </p>
       <div className="mb-3 grid grid-cols-1 gap-2 text-xs text-gray-600 sm:grid-cols-3">
         <div className="rounded bg-gray-50 px-3 py-2">
@@ -430,7 +496,7 @@ function ImpactMetrics({ impact }: { impact: CostImpact }) {
           }
         />
         <KpiCard
-          label="Relative to gross result"
+          label="Relative to realised gross result"
           value={
             impact.pct_of_gross_result === null
               ? "—"
@@ -491,10 +557,39 @@ function ImpactMetrics({ impact }: { impact: CostImpact }) {
           }
         />
       </div>
-      <p className="mt-3 text-xs text-gray-500">
-        <strong>Relative to invested capital</strong>: uses average FIFO capital across every day in the period. <strong>Relative to gross result</strong>: the share of earnings consumed by costs (unavailable for a negative result). <strong>Annual cost ratio</strong>: costs relative to portfolio value on an annual basis, comparable to an ETF's TER.{" "}
-        <strong>Return reduction</strong>: the percentage points by which costs reduce portfolio returns.
+      <h4 className="mb-1 mt-5 text-sm font-medium text-gray-700">Cost impact including unrealised gains and losses</h4>
+      <p className="mb-3 max-w-3xl text-xs text-gray-600">
+        This estimate adds the period’s change in tax on open positions to incurred costs.
+        When an open gain becomes realised, its opening tax estimate is released.
       </p>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiCard
+          label="Change in estimated tax"
+          value={eurOrDash(projection.tax_change_eur)}
+          formula={<Formula>Closing estimated tax − Opening estimated tax</Formula>}
+        />
+        <KpiCard
+          label="Costs including tax change"
+          value={eurOrDash(projection.projected_period_costs_eur)}
+          formula={<Formula>Incurred costs + Change in estimated tax</Formula>}
+        />
+        <KpiCard
+          label="Gross result including unrealised change"
+          value={eurOrDash(projection.economic_gross_result_eur)}
+          formula={<Formula>Gross realised result + Closing unrealised gain or loss − Opening unrealised gain or loss</Formula>}
+        />
+        <KpiCard
+          label="Estimated share of gross result consumed by costs"
+          value={projection.projected_cost_impact_pct === null ? "—" : `${Number(projection.projected_cost_impact_pct).toFixed(2)}%`}
+          formula={
+            <>
+              <Formula>Costs including tax change ÷ Gross result including unrealised change × 100</Formula>
+              Calculated when both valuations are available and the gross result is positive.
+              A negative share indicates that the tax estimate fell by more than the costs incurred.
+            </>
+          }
+        />
+      </div>
     </div>
   );
 }

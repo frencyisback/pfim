@@ -134,10 +134,10 @@ file still in use by external processes.
 
 ## Supported Online Backup
 
-Backup creation is disabled by default. The deployment must explicitly set
-`BACKUP_ENABLED=true` and
-`EXPECTED_ALEMBIC_REVISION=<exact build revision>`. The effective status is
-exposed by `GET /api/v1/backup/status`.
+The new-install template enables backup creation with `BACKUP_ENABLED=true`
+and the schema revision shipped with the build. The status endpoint
+`GET /api/v1/backup/status` reports the effective configuration.
+Setup preserves existing environment files. [Setup instructions](setup.md#verified-online-backup)
 
 The service used by the interface, API, `make backup` and
 `scripts/backup.ps1`:
@@ -205,13 +205,14 @@ candidate's integrity before replacing the database.
 
 ### Enabling Restore
 
-Restore is a high-impact maintenance feature and remains disabled by default.
-Intentionally enabling it requires all of:
+The new-install `backend/.env` enables restore. It requires both flags and
+the exact revision from the build's `backend/.env.example`. Without these
+settings the service refuses restore requests.
 
 ```dotenv
 BACKUP_ENABLED=true
 RESTORE_ENABLED=true
-EXPECTED_ALEMBIC_REVISION=<exact build revision>
+EXPECTED_ALEMBIC_REVISION=d7b2e9f4a6c1
 ```
 
 The effective status is exposed by `GET /api/v1/backup/status`. During restore,
@@ -298,5 +299,5 @@ the schema guard, but a new operation still requires a verifiable live
 database for the pre-restore backup. It does not offer a shortcut to overwrite
 an already corrupted file or one at an incompatible revision. It does not
 run `alembic upgrade`, `stamp` or `create_all`. The complete procedure and
-examples are in [Setup](setup.md#crash-safe-restore-opt-in); commit points
+examples are in [Setup](setup.md#crash-safe-restore); commit points
 are normative in [ADR 006](../ADR/006-restore-sqlite-crash-safe.md).

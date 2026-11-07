@@ -23,9 +23,9 @@ Use SQLite as the database, with all data access mediated by SQLAlchemy 2.0
   and exposes contention rather than assuming it does not exist.
 - The current code includes SQLite-specific choices: PRAGMAs, `BEGIN
   IMMEDIATE`, the SQLite Online Backup API, batch migrations, and dedicated
-  file-based tests. Application restore is disabled by default and, when
-  deliberately enabled, follows the crash-safe maintenance protocol defined
-  in [ADR 006](006-restore-sqlite-crash-safe.md); it is not an ordinary file copy.
+  file-based tests. New installations enable application restore with the
+  shipped revision. Every restore follows the crash-safe maintenance
+  protocol defined in [ADR 006](006-restore-sqlite-crash-safe.md).
 - A possible move to PostgreSQL therefore requires reviewing persistence,
   migrations, concurrency, backup/recovery, operations, and tests; changing
   the connection string alone is insufficient.
