@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.orm import Session
 
+from app.finance.capital_gains import capital_gains_tax, remaining_capital_gains_tax
 from app.finance.income import yield_on_cost
 from app.finance.periods import (
     DAYS_PER_MONTH,
@@ -66,8 +68,10 @@ from app.utils.errors import ValidationErrorPFIM
 _CENT = Decimal("0.01")
 
 
-def _capital_gains_tax(gain: Decimal, rate: Decimal) -> Decimal:
-    return (max(gain, Decimal("0")) * rate / 100).quantize(_CENT, rounding=ROUND_HALF_UP)
+def _cost_percentage(costs: Decimal | None, basis: Decimal | None) -> Decimal | None:
+    if costs is None or basis is None or basis <= 0:
+        return None
+    return costs / basis * 100
 
 
 def withholding_eur(event) -> Decimal:
@@ -843,6 +847,15 @@ class ReportService:
     #
     _WITHHELD_CAPITAL_GAINS_TAX_TYPES = {"tax", "capital_gains_tax"}
 
+    def _capital_gains_withheld_by_date(self, trades: list, costs_by_trade: dict) -> dict:
+        withheld = defaultdict(Decimal)
+        for trade in trades:
+            if trade.type == "sell":
+                for cost in costs_by_trade.get(trade.id, []):
+                    if cost.cost_type in self._WITHHELD_CAPITAL_GAINS_TAX_TYPES:
+                        withheld[trade.date] += abs(Decimal(cost.amount_eur))
+        return dict(withheld)
+
     def fiscal_position(
         self, date_from: dt.date | None = None, date_to: dt.date | None = None
     ) -> FiscalPosition:
@@ -859,8 +872,9 @@ class ReportService:
         return self._fiscal_position_from_data(
             tax_events=tax_events,
             income_events=income_events,
-            trades=trades,
-            costs_by_trade=self.trade_repo.costs_grouped_by_trade(),
+            capital_gains_withheld=self._capital_gains_withheld_by_date(
+                trades, self.trade_repo.costs_grouped_by_trade()
+            ),
         )
 
     def _fiscal_position_from_data(
@@ -868,8 +882,7 @@ class ReportService:
         *,
         tax_events: list,
         income_events: list,
-        trades: list,
-        costs_by_trade: dict,
+        capital_gains_withheld: dict[dt.date, Decimal],
     ) -> FiscalPosition:
         """Build the tax position from already filtered collections, reusing cost/TWR data and
         the same time cutoff. Round compared tax amounts to cents with ROUND_HALF_UP while
@@ -896,23 +909,10 @@ class ReportService:
         net = capital_gains + capital_losses  # Capital losses are negative.
 
         rate = self.tax_settings_service.get_rate("capital_gains_tax_rate")
-        gross_estimated = _capital_gains_tax(net, rate)
-
-        already_withheld_raw = sum(
-            (
-                abs(Decimal(c.amount_eur))
-                for t in trades
-                if t.type == "sell"
-                for c in costs_by_trade.get(t.id, [])
-                if c.cost_type in self._WITHHELD_CAPITAL_GAINS_TAX_TYPES
-            ),
-            Decimal("0"),
-        )
+        gross_estimated = capital_gains_tax(net, rate)
+        already_withheld_raw = sum(capital_gains_withheld.values(), Decimal("0"))
         already_withheld = already_withheld_raw.quantize(_CENT, rounding=ROUND_HALF_UP)
-        estimated_due = max(
-            (gross_estimated - already_withheld).quantize(_CENT, rounding=ROUND_HALF_UP),
-            Decimal("0.00"),
-        )
+        estimated_due = remaining_capital_gains_tax(net, rate, already_withheld_raw)
 
         return FiscalPosition(
             capital_gains=capital_gains,
@@ -935,9 +935,8 @@ class ReportService:
     def costs_analysis(
         self, date_from: dt.date | None = None, date_to: dt.date | None = None
     ) -> CostsAnalysisReport:
-        """Compare realized gross results with period costs and taxes on realized net gains.
-        Project the tax on open gains separately, using the same FIFO valuations as the
-        period's cost ratios. Every section ends at period_to, no later than today.
+        """Calculate realized results and period performance including the changes in open
+        FIFO gains and estimated tax. Every section ends at period_to, no later than today.
         """
         validate_date_range(date_from, date_to)
         today = dt.date.today()
@@ -948,7 +947,7 @@ class ReportService:
             )
         effective_to = min(date_to, today) if date_to is not None else today
 
-        # Preload once. The same objects feed aggregates, tax position, asset bases, and both TWR
+        # Preload once. The same objects feed aggregates, tax position, asset bases, and all TWR
         # variants, reducing SQL cost and ensuring an identical temporal snapshot.
         #
         #
@@ -965,11 +964,11 @@ class ReportService:
         trades = [trade for trade in all_trades if in_period(trade.date)]
         recurring = [cost for cost in all_recurring if in_period(cost.date)]
         tax_events = self.tax_event_repo.list(date_from=date_from, date_to=effective_to)
+        capital_gains_withheld = self._capital_gains_withheld_by_date(trades, costs_by_trade)
         fiscal = self._fiscal_position_from_data(
             tax_events=tax_events,
             income_events=income_events,
-            trades=trades,
-            costs_by_trade=costs_by_trade,
+            capital_gains_withheld=capital_gains_withheld,
         )
 
         # --- Block 1: realized gross result ---
@@ -1109,11 +1108,19 @@ class ReportService:
         unrealized_tax = self._unrealized_tax_projection(
             opening_date, effective_to, valuations, fiscal.tax_rate_pct, total_costs, realized
         )
+        realized_gain_changes = defaultdict(Decimal)
+        for event in tax_events:
+            if event.event_type in {"capital_gain", "capital_loss"} and event.gross_amount:
+                realized_gain_changes[event.event_date] += Decimal(event.gross_amount)
         impact = self._cost_impact(
             total_costs,
             realized,
             effective_from,
             effective_to,
+            projection=unrealized_tax,
+            tax_rate_pct=fiscal.tax_rate_pct,
+            realized_gain_changes=realized_gain_changes,
+            capital_gains_withheld=capital_gains_withheld,
             valuations=valuations,
             change_dates=sorted(change_dates),
             trades=all_trades,
@@ -1186,29 +1193,27 @@ class ReportService:
                 open_positions=position.open_positions,
                 missing_price_tickers=missing,
                 net_unrealized_eur=gain,
-                estimated_tax_eur=None if gain is None else _capital_gains_tax(gain, rate),
+                estimated_tax_eur=None if gain is None else capital_gains_tax(gain, rate),
             )
 
         opening = snapshot(opening_date)
         closing = snapshot(closing_date)
-        tax_change = projected_costs = gross_result = impact = None
+        gain_change = tax_change = projected_costs = gross_result = None
         if opening.estimated_tax_eur is not None and closing.estimated_tax_eur is not None:
             # An earlier estimate is released when its lots are sold. Adding only the
             # change keeps the same gains from entering both realized and open tax costs.
             tax_change = closing.estimated_tax_eur - opening.estimated_tax_eur
             projected_costs = period_costs + tax_change
-            gross_result = (
-                realized.gross_result + closing.net_unrealized_eur - opening.net_unrealized_eur
-            )
-            if gross_result > 0:
-                impact = projected_costs / gross_result * 100
+            gain_change = closing.net_unrealized_eur - opening.net_unrealized_eur
+            gross_result = realized.gross_result + gain_change
         return UnrealizedTaxProjection(
             opening=opening,
             closing=closing,
+            unrealized_change_eur=gain_change,
             tax_change_eur=tax_change,
             projected_period_costs_eur=projected_costs,
             economic_gross_result_eur=gross_result,
-            projected_cost_impact_pct=impact,
+            projected_cost_impact_pct=_cost_percentage(projected_costs, gross_result),
         )
 
     def _estimated_stamp_duty(self, portfolio_value: Decimal) -> Decimal:
@@ -1226,6 +1231,10 @@ class ReportService:
         period_start: dt.date | None,
         period_end: dt.date,
         *,
+        projection: UnrealizedTaxProjection,
+        tax_rate_pct: Decimal,
+        realized_gain_changes: dict[dt.date, Decimal],
+        capital_gains_withheld: dict[dt.date, Decimal],
         valuations: dict[dt.date, PortfolioValuation],
         change_dates: list[dt.date],
         trades: list,
@@ -1258,23 +1267,15 @@ class ReportService:
             average_portfolio_value = weighted_value / Decimal(period_days)
             average_invested = weighted_invested / Decimal(period_days)
 
-        pct_of_invested = (
-            (total_costs / average_invested * 100)
-            if average_invested is not None and average_invested > 0
-            else None
-        )
-        pct_of_gross = (
-            (total_costs / realized.gross_result * 100) if realized.gross_result > 0 else None
-        )
-
-        # Annual TER-style ratio: period costs divided by average daily value, then annualized
-        # over the actual inclusive duration.
-        annual_incidence = None
-        if average_portfolio_value is not None and average_portfolio_value > 0 and period_days:
-            incidence = total_costs / average_portfolio_value * 100
-            annual_incidence = incidence * Decimal(DAYS_PER_YEAR) / Decimal(period_days)
-
-        twr_gross, twr_net = self.performance_service.portfolio_twr_pair(
+        # Existing portfolio averages allow a FIFO-cost fallback. Only an average
+        # entirely covered by recorded quotes can support the estimated market-value ratio.
+        quoted_average = average_portfolio_value
+        if any(valuations[day].cost_fallbacks for day in change_dates):
+            quoted_average = None
+        projected_costs = projection.projected_period_costs_eur
+        incidence = _cost_percentage(total_costs, average_portfolio_value)
+        projected_incidence = _cost_percentage(projected_costs, quoted_average)
+        twr_gross, twr_net, estimated_twr = self.performance_service.cost_report_twr(
             period_start=period_start,
             as_of=period_end,
             trades=trades,
@@ -1282,19 +1283,39 @@ class ReportService:
             recurring_costs=recurring_costs,
             costs_by_trade=costs_by_trade,
             prices=prices,
+            tax_rate_pct=tax_rate_pct,
+            realized_gain_changes=realized_gain_changes,
+            capital_gains_withheld=capital_gains_withheld,
         )
         drag = (
             (twr_gross - twr_net) * 100 if twr_gross is not None and twr_net is not None else None
         )
 
         return CostImpact(
-            pct_of_invested=pct_of_invested,
-            pct_of_gross_result=pct_of_gross,
-            annual_incidence_pct=annual_incidence,
+            pct_of_invested=_cost_percentage(total_costs, average_invested),
+            pct_of_gross_result=_cost_percentage(total_costs, realized.gross_result),
+            annual_incidence_pct=(
+                incidence * DAYS_PER_YEAR / period_days
+                if incidence is not None and period_days
+                else None
+            ),
             average_invested_capital=average_invested,
             average_portfolio_value=average_portfolio_value,
             period_days=period_days,
             twr_gross=twr_gross,
             twr_net=twr_net,
             twr_drag_pct_points=drag,
+            average_quoted_portfolio_value=quoted_average,
+            projected_pct_of_invested=_cost_percentage(projected_costs, average_invested),
+            projected_annual_incidence_pct=(
+                projected_incidence * DAYS_PER_YEAR / period_days
+                if projected_incidence is not None and period_days
+                else None
+            ),
+            estimated_twr_net=estimated_twr,
+            estimated_twr_drag_pct_points=(
+                (twr_gross - estimated_twr) * 100
+                if twr_gross is not None and estimated_twr is not None
+                else None
+            ),
         )

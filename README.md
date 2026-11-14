@@ -40,10 +40,12 @@ account to a cash account, then add your transactions and investment activity.
 | **Forecasts** | Starting capital, time horizon, monthly income/expenses and growth/return assumptions. | Net worth projections and comparisons of saved scenarios. |
 | **Settings** | Accounts with opening dates/balances, categories, tax rates, exchange rates and CSV mappings. | The configuration used by entry forms, imports and calculations. |
 
-In **Reports → Costs and Taxation**, the closing estimate shows the tax on
-net gains in open positions at the configured rate. The projected cost KPI
-compares period costs plus the change in that estimate with period earnings
-including the change in unrealised gains. A missing quote is flagged.
+In **Reports → Costs and Taxation**, **Gross result** includes the period's
+change in unrealised gains and losses. **Net realised result** shows realised
+earnings after period costs. The closing table shows the estimated tax on open
+positions. **Impact on performance** uses the change in that estimate for its
+three cost ratios and shows a time-weighted return after costs and estimated
+tax. A filtered period starts with the gains already present at its opening.
 [Calculation and example](docs/finance-calculations.md#tax-on-unrealised-gains)
 
 ## 🏗️ Technology Stack

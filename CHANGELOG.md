@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — Costs and Taxation performance metrics
+
+- **Investment result (gross)** includes the change in unrealised gains and
+  losses over the selected period. **Net realised result** uses realised
+  earnings and period costs, including any estimated tax still due on sales.
+- **Estimated tax on open positions** shows the closing valuation. The
+  opening valuation is used internally when calculating period changes.
+- **Impact on performance** brings together the input amounts, three cost
+  ratios, before-cost and estimated after-cost TWR, and their difference
+  in percentage points. The ratios include the period's change in estimated
+  tax on open positions. The estimated TWR also accounts for that liability
+  at cash-flow dates and reconciles tax on sales with amounts withheld.
+  [Calculation and example](docs/finance-calculations.md#tax-on-unrealised-gains)
+
 ### Changed — Costs and Taxation, security prices and setup
 
 - The report now estimates capital-gains tax on open positions at both ends

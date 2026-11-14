@@ -225,6 +225,11 @@ export interface CostImpact {
   twr_gross: string | null;
   twr_net: string | null;
   twr_drag_pct_points: string | null;
+  average_quoted_portfolio_value: string | null;
+  projected_pct_of_invested: string | null;
+  projected_annual_incidence_pct: string | null;
+  estimated_twr_net: string | null;
+  estimated_twr_drag_pct_points: string | null;
 }
 
 /** Period tax position, calculated centrally by the backend.
@@ -256,6 +261,7 @@ export interface UnrealizedTaxSnapshot {
 export interface UnrealizedTaxProjection {
   opening: UnrealizedTaxSnapshot;
   closing: UnrealizedTaxSnapshot;
+  unrealized_change_eur: string | null;
   tax_change_eur: string | null;
   economic_gross_result_eur: string | null;
   projected_period_costs_eur: string | null;

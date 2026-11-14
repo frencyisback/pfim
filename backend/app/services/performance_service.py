@@ -10,9 +10,11 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
+from app.finance.capital_gains import capital_gains_tax, remaining_capital_gains_tax
 from app.finance.income import current_yield, yield_on_cost
 from app.finance.periods import trailing_year_start
 from app.finance.portfolio import (
@@ -47,6 +49,40 @@ class PortfolioValuation:
     invested: Decimal = Decimal("0")
     open_positions: int = 0
     cost_fallbacks: list[int] = field(default_factory=list)
+
+
+@dataclass
+class _TwrTaxBasis:
+    rate: Decimal
+    realized_gain_changes: dict[dt.date, Decimal]
+    capital_gains_withheld: dict[dt.date, Decimal]
+
+    def closing_liabilities(
+        self, valuations: dict[dt.date, PortfolioValuation], start: dt.date, end: dt.date
+    ) -> dict[dt.date, Decimal]:
+        """Tax on open lots plus the period's accrued, unpaid tax on realised gains.
+
+        A manual tax event may fall between cash flows. Carry its effect forward to the
+        next valuation, without inventing an external flow or rounding each gain separately.
+        """
+        gains = withheld = Decimal("0")
+        liabilities = {}
+        days = (
+            valuations.keys()
+            | self.realized_gain_changes.keys()
+            | self.capital_gains_withheld.keys()
+        )
+        for day in sorted(days):
+            if not start <= day <= end:
+                continue
+            gains += self.realized_gain_changes.get(day, Decimal("0"))
+            withheld += self.capital_gains_withheld.get(day, Decimal("0"))
+            if day in valuations:
+                position = valuations[day]
+                liabilities[day] = capital_gains_tax(
+                    position.value - position.invested, self.rate
+                ) + remaining_capital_gains_tax(gains, self.rate, withheld)
+        return liabilities
 
 
 class PerformanceService:
@@ -569,6 +605,35 @@ class PerformanceService:
         )
         return values[False], values[True]
 
+    def cost_report_twr(
+        self,
+        *,
+        period_start: dt.date | None,
+        as_of: dt.date,
+        trades: list,
+        prices: list,
+        income_events: list,
+        recurring_costs: list,
+        costs_by_trade: dict[int, Decimal],
+        tax_rate_pct: Decimal,
+        realized_gain_changes: dict[dt.date, Decimal],
+        capital_gains_withheld: dict[dt.date, Decimal],
+    ) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+        """Gross, recorded-cost and estimated after-tax TWR for Costs and Taxation."""
+        values = self._portfolio_twr_variants(
+            net_modes=(False, True),
+            income_basis="net",
+            period_start=period_start,
+            as_of=as_of,
+            trades=trades,
+            prices=prices,
+            income_events=income_events,
+            recurring_costs=recurring_costs,
+            costs_by_trade=costs_by_trade,
+            tax_basis=_TwrTaxBasis(tax_rate_pct, realized_gain_changes, capital_gains_withheld),
+        )
+        return values[False], values[True], values["estimated"]
+
     def _portfolio_twr_variants(
         self,
         *,
@@ -581,7 +646,8 @@ class PerformanceService:
         trades: list | None = None,
         income_events: list | None = None,
         prices: list | None = None,
-    ) -> dict[bool, Decimal | None]:
+        tax_basis: _TwrTaxBasis | None = None,
+    ) -> dict[bool | Literal["estimated"], Decimal | None]:
         """Shared TWR implementation using optionally preloaded data."""
         period_end = as_of or dt.date.today()
         all_trades = trades if trades is not None else self.trade_repo.list(date_to=period_end)
@@ -597,7 +663,8 @@ class PerformanceService:
             income_by_date[event.payment_date] += self._income_amount(event, income_basis)
 
         first_trade = min((trade.date for trade in all_trades), default=None)
-        empty = {mode: None for mode in net_modes}
+        modes = (*net_modes, "estimated") if tax_basis is not None else net_modes
+        empty = {mode: None for mode in modes}
         if first_trade is None:
             return empty
 
@@ -644,6 +711,8 @@ class PerformanceService:
             trade.date for trade in all_trades if initial_start <= trade.date <= period_end
         }
         closing_dates = candidate_open_dates | {initial_start, period_end}
+        if tax_basis is not None:
+            closing_dates |= relevant_flow_dates
         pre_flow_dates = relevant_flow_dates | {initial_start}
 
         closing_values = self.portfolio_valuations(
@@ -687,9 +756,9 @@ class PerformanceService:
         if any(closing[date] <= 0 for date in candidate_open_dates if date >= actual_start):
             return empty
 
-        results: dict[bool, Decimal | None] = {}
-        for mode in net_modes:
-            flows = flow_maps[mode]
+        results: dict[bool | Literal["estimated"], Decimal | None] = {}
+        for mode in modes:
+            flows = flow_maps[bool(mode)]
             # The flow difference contains exactly the costs already aggregated by date, including
             # recurring costs. No second aggregation can diverge.
             #
@@ -708,6 +777,43 @@ class PerformanceService:
                 and date <= period_end
             ]
             starting_value = closing[actual_start] if opened_by_trade else pre_flow[actual_start]
+            opening_capital = starting_value
+            ending_value = closing[period_end]
+            closing_tax = {}
+            if mode == "estimated":
+                assert tax_basis is not None
+                opening = (
+                    closing_values[actual_start]
+                    if opened_by_trade
+                    else pre_flow_values[actual_start]
+                )
+                checkpoints = set(flow_dates) | {actual_start, period_end}
+                if (
+                    opening.cost_fallbacks
+                    or any(closing_values[d].cost_fallbacks for d in checkpoints)
+                    or any(pre_flow_values[d].cost_fallbacks for d in flow_dates)
+                ):
+                    results[mode] = None
+                    continue
+                closing_tax = tax_basis.closing_liabilities(
+                    closing_values, actual_start, period_end
+                )
+                # An exhausted opening base cannot fund another linked period.
+                # The terminal mark can be exactly zero: with a positive base
+                # the last subperiod then has a defined return of -100%.
+                if closing[period_end] < closing_tax[period_end] or any(
+                    closing[d] <= closing_tax[d] for d in checkpoints if d < period_end
+                ):
+                    results[mode] = None
+                    continue
+                # For an existing position the opening is before today's transactions or
+                # fiscal events. Tax accrued earlier in the selected period is zero here.
+                starting_value -= (
+                    closing_tax[actual_start]
+                    if opened_by_trade
+                    else capital_gains_tax(opening.value - opening.invested, tax_basis.rate)
+                )
+                ending_value -= closing_tax[period_end]
             if starting_value <= 0:
                 results[mode] = None
                 continue
@@ -720,7 +826,7 @@ class PerformanceService:
                 #
                 opening_factor = (
                     starting_value + income_by_date.get(actual_start, Decimal("0"))
-                ) / (starting_value + costs_by_date.get(actual_start, Decimal("0")))
+                ) / (opening_capital + costs_by_date.get(actual_start, Decimal("0")))
 
             # P is security value before today's trades. A flow of G - I + C requires pre-flow P + I -
             # C, giving P + G and leaving no income or costs in the next period's capital. Each mode
@@ -730,12 +836,17 @@ class PerformanceService:
                 date: pre_flow[date]
                 + income_by_date.get(date, Decimal("0"))
                 - costs_by_date.get(date, Decimal("0"))
+                # A sale releases its open tax on this date, while its tax still due
+                # becomes a liability. A paid withholding is already in the actual
+                # costs/flows. Using the post-operation liability here places the next
+                # subperiod on the same net basis without a hypothetical cash movement.
+                - closing_tax.get(date, Decimal("0"))
                 for date in flow_dates
             }
             try:
                 subsequent_return = time_weighted_return(
                     starting_value=starting_value,
-                    ending_value=closing[period_end],
+                    ending_value=ending_value,
                     cash_flows=[(date, flows[date]) for date in flow_dates],
                     prices_at_flow_dates=adjusted_pre_flow,
                     period_start=actual_start,

@@ -65,16 +65,16 @@ describe("formatPercent", () => {
 });
 
 describe("formatReturnDrag", () => {
-  it("shows positive cost drag as a reduction", () => {
-    expect(normalizza(formatReturnDrag(0.5))).toBe("−0,50 p.p.");
+  it("shows a positive difference when costs reduce the return", () => {
+    expect(normalizza(formatReturnDrag(0.5))).toBe("0,50 p.p.");
   });
 
-  it("does not prepend a second sign when the difference is negative", () => {
-    // Net TWR above gross TWR must not produce a double minus sign.
-    expect(normalizza(formatReturnDrag(-0.5))).toBe("+0,50 p.p.");
+  it("preserves negative differences when estimated net TWR exceeds gross TWR", () => {
+    expect(normalizza(formatReturnDrag(-0.5))).toBe("-0,50 p.p.");
   });
 
   it("remains unsigned when there is no cost drag", () => {
     expect(normalizza(formatReturnDrag(0))).toBe("0,00 p.p.");
+    expect(normalizza(formatReturnDrag(-0))).toBe("0,00 p.p.");
   });
 });

@@ -40,15 +40,11 @@ export function formatPercent(value: number): string {
   return new Intl.NumberFormat("it-IT", { style: "percent", minimumFractionDigits: 2 }).format(value);
 }
 
-/** Cost drag in percentage points. Gross TWR minus net TWR is positive
- * when costs reduce returns, displayed as a reduction. Derive the sign
- * from the data: net TWR can exceed gross TWR when sale costs reduce
- * withdrawn capital, so a fixed minus sign could produce a double sign. */
+/** Gross TWR minus estimated net TWR, in percentage points. */
 export function formatReturnDrag(gapInPoints: number): string {
   const formatted = new Intl.NumberFormat("it-IT", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(Math.abs(gapInPoints));
-  if (gapInPoints === 0) return `0,00 p.p.`;
-  return `${gapInPoints > 0 ? "−" : "+"}${formatted} p.p.`;
+  }).format(gapInPoints === 0 ? 0 : gapInPoints);
+  return `${formatted} p.p.`;
 }
