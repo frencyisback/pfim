@@ -1042,7 +1042,7 @@ financial position.
 | **Transfer Analysis** | Volume transferred between own accounts | Period |
 | **Securities Analysis** | Positions, value, cost, P&L, and sector/industry/country classifications | Current |
 | **Coupon Analysis** | Receipts by security and period | Period |
-| **Costs and Taxes** | Trade costs, recurring costs, and informational tax estimates | Period |
+| **Costs and Taxation** | Investment results, itemised costs, estimated tax on open positions and performance after estimated tax | Period |
 
 TWR/MWR performance metrics are exposed by the dedicated endpoints in §6.7.
 Report endpoints accept `format=csv` where specified by OpenAPI; net worth
@@ -1687,7 +1687,7 @@ backup format. [Security detail guide](docs/security-detail.md)
 
 Each report is selectable from a menu (tabs): Net Worth, Income Statement,
 **Securities Analysis**, Expense Analysis, **Income Analysis**, **Transfer
-Analysis**, **Coupon Analysis** (§7.5.1), **Costs and Taxes** (§11.6),
+Analysis**, **Coupon Analysis** (§7.5.1), **Costs and Taxation** (§11.6),
 Backup. Parameters (period, format) are set
 before rendering.
 
@@ -2196,6 +2196,9 @@ A purchase of 100 and an initial cost of 5 produce
 position, the initial basis is instead `P`, and flows on the initial date
 are included in the chained return.
 
+The Costs and Taxation report adds a tax-adjusted TWR using the same flow
+dates and opening convention. Section 11.6 defines its valuation basis.
+
 **When it cannot be calculated** (the report returns `null`, the UI shows “—”):
 - No recorded trades, or a zero portfolio value at the first trade
 - The opening value of a subperiod is not positive: this happens when a
@@ -2459,7 +2462,7 @@ internal methods into recognized tax methods. The structure allows users to:
 2. Link a cost to its trade or account and, for a tax event, optionally to a
    single trade or income event
 3. Calculate aggregate totals and estimates based on configured rates
-4. Export the Costs and Taxes report to support verification
+4. Export the Costs and Taxation report to support verification
 
 Flexibility does not allow a sign that would reverse the meaning in reports:
 when `gross_amount` is present, `capital_gain` requires it to be nonnegative
@@ -2517,7 +2520,7 @@ estimate.
 ### 11.4 Tax Position — A Single Calculation
 
 **There is no separate “tax ledger” report.** Its aggregates duplicated those
-in “Costs and Taxes” (§11.6), with one value diverging: everything now lives
+in “Costs and Taxation” (§11.6), with one value diverging: everything now lives
 in a single tab with a single calculation source.
 
 The period's tax position is exposed by
@@ -2588,7 +2591,9 @@ maintains a single rule for all economic transactions.
 
 These costs are recorded under **Securities → Recurring costs**.
 
-### 11.6 Costs and Taxes Report
+<a id="116-costs-and-taxes-report"></a>
+
+### 11.6 Costs and Taxation Report
 
 Replaces the former tax ledger as a tab in Reports. It answers the question
 “how much drag does my investment activity create, and how much does it
@@ -2596,10 +2601,13 @@ affect performance?” Default period: **all history**. The shared selector
 supports whole months, month ranges, and calendar-year shortcuts; the same
 interval is applied to the CSV export.
 
-**Block 1 — Realized result (gross):** capital gains, capital losses, the
-net offset result, and gross coupons/dividends. Capital losses **are not**
-a cost: they are market losses and belong here because they provide the
-reference against which to interpret costs.
+**Investment result (gross)** shows Capital gains, Unrealised gain/loss,
+Capital losses, Gross coupons and dividends, and Gross result. Unrealised
+gain/loss is the change in the open EUR FIFO gain or loss from the preceding
+day's close to the period end. Gross result adds that change to realised
+gains, signed realised losses and gross income. Net realised result deducts
+the period's itemised costs from realised gross earnings, independently of
+quote availability.
 
 **Block 2 — Costs incurred**, in three groups:
 
@@ -2622,45 +2630,37 @@ reference against which to interpret costs.
 - Coupon withholding taxes are always actual amounts: they come from the
   user-entered `tax_withheld` field.
 
-**Block 3 — Impact on performance**, four views:
-- **% of average invested capital**: how many euros of costs for each €100
-  of average daily FIFO cost basis in the period
-- **% of gross result**: how much of the gain was eroded (`null` if the
-  gross result is not positive)
-- **Annual cost ratio**: costs / average daily portfolio value, annualized
-  using the period's inclusive day count; it can be compared with an ETF's
-  TER only as an order of magnitude
-- **Return drag**: difference in percentage points between TWR before and
-  after costs (§9.3)
+**Estimated tax on open positions** displays the closing date, the number
+of open positions, their net unrealised gain/loss and the estimated tax.
+The API supplies both opening and closing snapshots in `unrealized_tax`.
+Both use the configured rate on positive net open gains, the last recorded
+quotes available at the cutoff, their stored FX and remaining EUR FIFO cost.
+Missing prices identify the affected tickers and suppress dependent estimates.
 
-**Open-position tax projection.** The additive JSON field `unrealized_tax`
-reports opening and closing net unrealised P&L, estimated tax in EUR and
-any unpriced tickers. At each cutoff, the estimate applies the configured
-rate to positive net open gains across securities using observed quotes,
-their stored FX rates and remaining EUR FIFO basis. Both snapshots use the
-current configured rate. Period projections use the day before the start
-as the opening cutoff and the effective end as the closing cutoff.
+**Impact on performance** groups the input amounts with six metrics. The
+report uses the effective period (capped at today), inclusive day count,
+average invested FIFO capital, average quoted market value, realised gross
+earnings, unrealised change, gross result, period costs, tax rate, tax
+change and costs including the tax change.
 
-The projected cost-impact KPI divides period costs plus the change in
-estimated tax by realised gross result plus the change in unrealised P&L.
-It is expressed as a percentage only for a positive denominator. Missing
-prices on open positions make the affected snapshot and dependent metrics
-unavailable. Realised fiscal entries, the itemised CSV and historical TWR
-retain their existing scope. [Worked example](docs/finance-calculations.md#tax-on-unrealised-gains)
+| Metric | Basis |
+| --- | --- |
+| Relative to invested capital | Period costs plus the change in estimated open-position tax, as a percentage of average daily FIFO capital |
+| Relative to gross result | The same adjusted costs, as a percentage of gross result including the unrealised change |
+| Annual cost ratio (TER-like) | Adjusted costs as a percentage of average daily quoted portfolio value, multiplied by 365 / inclusive days |
+| TWR before costs | Standard before-cost portfolio TWR with net income under §9.3 |
+| TWR after costs (estimated) | Linked returns using recorded costs and portfolio valuations after estimated capital-gains liabilities |
+| Return reduction | Before-cost TWR minus estimated after-cost TWR in percentage points |
 
-The report exposes `average_invested_capital`, `average_portfolio_value`,
-and `period_days`. Realized results, taxes, costs, averages, and TWR share
-the same effective interval; a `date_to` beyond today is capped at today,
-and the response declares the date actually used in the calculation. A
-future start date is rejected. Compared tax amounts are rounded to the
-cent with `ROUND_HALF_UP`.
-
-**TWR after costs** incorporates drag both in the flows and in values before
-the flows, while keeping the securities' value after the flow identical
-(§9.3). The opening day applies the factor `(V0 + I0) / (V0 + C0)`, so the
-initial commission counts exactly once. Coupon withholding taxes are
-already deducted in both variants because `net_amount_eur` is net by
-definition.
+The three ratios require positive denominators. Estimated tax can fall
+enough for adjusted costs to be negative. The estimated TWR recognises both
+tax on open lots and the residual tax due on period-to-date net realised
+gains after sale withholding. Same-day operations are grouped. The TWR
+requires priced holdings at its valuation checkpoints and follows the
+portfolio TWR rules for insufficient history and full closure. Both TWR
+variants use net coupon and dividend income. Tax estimates create no fiscal
+entries. The CSV contains only itemised period costs.
+[Formulas and worked examples](docs/finance-calculations.md#tax-on-unrealised-gains)
 
 ⚠️ **Disclaimer:** *“Amounts marked as 'estimated' are calculated from the
 configured rates, not from tax documents. Verify them with a qualified
@@ -2888,7 +2888,8 @@ is now as follows.
   selected catalogue record and its observed EUR prices through today (§7.4.3)
 - Connected dated observations in Security detail, enabled backup and restore
   in the setup template and added a separate open-position tax estimate and
-  period cost-impact KPI to Costs and Taxes (§11.6).
+  period cost-impact measures to Costs and Taxation (§11.6). The unified
+  Impact on performance section includes estimated after-cost TWR.
 - Removed legacy OHLCV fields from the `prices` model through an Alembic
   migration, with tests for row preservation and schema-to-model alignment
 - Applied the leaf rule: any category without children is assignable,

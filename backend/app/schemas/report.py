@@ -300,6 +300,8 @@ class FiscalPosition(BaseModel):
 
 
 class CostImpact(BaseModel):
+    """Historical incurred-cost measures and estimates incorporating open-position tax."""
+
     pct_of_invested: Decimal | None
     pct_of_gross_result: Decimal | None
     annual_incidence_pct: Decimal | None
@@ -311,6 +313,11 @@ class CostImpact(BaseModel):
     twr_gross: Decimal | None
     twr_net: Decimal | None
     twr_drag_pct_points: Decimal | None
+    average_quoted_portfolio_value: Decimal | None
+    projected_pct_of_invested: Decimal | None
+    projected_annual_incidence_pct: Decimal | None
+    estimated_twr_net: Decimal | None
+    estimated_twr_drag_pct_points: Decimal | None
 
 
 class UnrealizedTaxSnapshot(BaseModel):
@@ -328,6 +335,7 @@ class UnrealizedTaxProjection(BaseModel):
 
     opening: UnrealizedTaxSnapshot
     closing: UnrealizedTaxSnapshot
+    unrealized_change_eur: Decimal | None
     tax_change_eur: Decimal | None
     economic_gross_result_eur: Decimal | None
     projected_period_costs_eur: Decimal | None

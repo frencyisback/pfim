@@ -191,6 +191,10 @@ Implementation choices not dictated by the formula:
   while others remain open does not reduce the portfolio to zero; a sale
   and repurchase on the same date remain aggregated at daily level.
 
+The Costs and Taxation report also calculates a TWR using portfolio values
+after estimated capital-gains tax. Its tax treatment and valuation requirements
+are described in [Report TWR after costs](#report-twr-after-costs).
+
 ### 2.3 Money-Weighted Return (MWR / XIRR)
 
 Reference: §9.4. Measures return on **capital as it was actually contributed**,
@@ -595,36 +599,19 @@ because a current metric cannot incorporate future rows; a future
 **dates actually calculated**, not the requested dates when these extend
 beyond today.
 
-Percentages no longer divide period costs by today's snapshots:
-
-```text
-% of invested capital = period_costs / daily_average_FIFO_capital
-annual cost ratio     = period_costs / daily_average_value
-                        × 365 / inclusive_days_in_period
-```
-
-Averages are weighted over every inclusive day. Value changes only on a
-trade or price date, so the service weights intervals between change dates
-without materializing one row per day. The response declares
-`average_invested_capital`, `average_portfolio_value` and `period_days`,
-allowing the user to verify the displayed denominator.
-
-Gross/net TWR receives the same `period_start` and `period_end`. Monetary tax
-amounts are rounded to cents with `ROUND_HALF_UP`: a residual smaller than
-half a cent does not generate a phantom €0.00 entry.
-
-The stamp-duty estimate on current value is informational, not a cost
-incurred in the period. It appears separately in
-`current_stamp_duty_estimate` only when the interval includes today and no
-actual stamp duty already exists in the current year. It does not enter
-groups, `total_costs`, net result or cost ratios.
+**Period costs** (`total_costs`) comprise recorded taxes, trading charges,
+recurring costs and any estimated tax still due on the period's net realised
+gains after sale withholding. A current annual stamp-duty estimate appears
+separately when the interval includes today and no actual duty is recorded
+for the current year. Only the period cost items are exported to CSV.
 
 ### Tax on unrealised gains
 
 The JSON field `unrealized_tax` gives two estimates in EUR. The opening
 snapshot values the positions held at the close of the day before the
 interval. The closing snapshot values those held at the close of
-`period_to`. An empty starting portfolio has a zero balance.
+`period_to`. An empty starting portfolio has a zero balance. The page
+displays the closing snapshot in **Estimated tax on open positions**.
 
 For each date, PFIM values the remaining FIFO quantity of each security
 using the last recorded quote on or before that date and its stored EUR
@@ -640,10 +627,23 @@ open positions the net gain and estimated tax are both zero.
 
 | Period measure | Calculation |
 | --- | --- |
-| Change in estimated tax | Closing estimate − opening estimate |
-| Projected period costs | Reported period costs + change in estimated tax |
-| Gross economic result | Realised gross result + closing unrealised gain/loss − opening unrealised gain/loss |
-| Projected cost impact | 100 × projected period costs / gross economic result, when the result is positive |
+| Realised gross result | Realised gains + signed realised losses + gross income |
+| Unrealised gain/loss | Closing net unrealised gain/loss − opening net unrealised gain/loss |
+| Gross result | Realised gross result + period change in unrealised gain/loss |
+| Net realised result | Realised gross result − period costs |
+| Change in estimated tax | Closing open-position tax estimate − opening estimate |
+| Costs including tax change | Period costs + change in estimated tax |
+| Relative to invested capital | 100 × costs including tax change / average daily FIFO invested capital |
+| Relative to gross result | 100 × costs including tax change / gross result |
+| Annual cost ratio (TER-like) | 100 × costs including tax change / average daily portfolio market value × 365 / days included |
+
+The three cost ratios require a positive denominator. The annual ratio
+also requires a quoted value for all open holdings on each included day.
+Averages weight each valuation by the number of days until the next change,
+including the final day. The market value uses the latest quote available
+by each date. The annual ratio includes estimated taxes and can be negative
+when an earlier tax estimate falls. It measures the portfolio's annualised
+cost incidence, including taxation.
 
 For example, ten shares bought for €100 each and valued at €120 have an
 unrealised gain of €200. At a configured rate of 26%, estimated tax is
@@ -655,10 +655,74 @@ realised tax in that period's projection. With no further earnings or
 costs, the gross economic result is zero and the percentage is unavailable.
 A reserve release can also produce a negative projected cost amount.
 
-The closing estimate creates no tax event. Its balance and period change
-are excluded from the realised fiscal position, the itemised cost CSV and
-historical gross/net TWR. A missing opening or closing valuation also
-makes the period projection unavailable.
+The closing estimate creates no tax event. A missing opening or closing
+quote suppresses the affected monetary change and ratios. Realised earnings,
+period costs and the net realised result can still be calculated.
+
+The report API supplies `unrealized_tax.unrealized_change_eur` for the
+period change and `unrealized_tax.economic_gross_result_eur` for Gross result.
+`realized.gross_result` is the realised subtotal. The displayed cost
+percentages come from `impact.projected_pct_of_invested`,
+`unrealized_tax.projected_cost_impact_pct` and `impact.projected_annual_incidence_pct`.
+The quoted-value denominator is `impact.average_quoted_portfolio_value`.
+Earlier fields such as `impact.pct_of_invested` describe cost incidence
+on the original period-cost basis.
+
+### Report TWR after costs
+
+**TWR before costs** uses the portfolio's ordinary market valuation and
+net coupon/dividend income. **TWR after costs** in this report is an
+estimate. It uses the same income convention and accounts for recorded
+fees, recurring charges and actual sale withholding. It also values the
+portfolio after its estimated capital-gains liability at the start, at
+cash flows and at the end. The liability consists of:
+
+- Estimated tax on the positive net EUR gain of the remaining FIFO lots.
+- Estimated tax on positive net gains already realised in the selected
+  period through the valuation date, less capital-gains tax already
+  withheld on sales, floored at zero. Applicable tax amounts are rounded
+  to cents with `ROUND_HALF_UP`.
+
+Selling a lot releases its open-position tax estimate. A recorded
+withholding reduces sale proceeds and the outstanding realised estimate.
+An unpaid estimate affects portfolio valuation. The only external flows
+are those arising from recorded operations. When there is a portfolio at
+the start of the filter, TWR uses its pre-trade holdings marked at the
+opening day's available prices, consistent with §2.2. The separate
+euro-denominated gain for the period uses the preceding day's close.
+
+For example, with an initial €1,000 investment, a closing value of €1,200,
+a 26% rate and no other flows or charges, before-cost TWR is 20%.
+After €52 estimated tax, the closing valuation is €1,148 and estimated
+after-cost TWR is 14.8%. **Return reduction** is **5.2 percentage points**
+(before-cost TWR minus estimated after-cost TWR). With an unchanged price
+in the following month, both returns and the change in tax are zero.
+
+If half the shares are sold for €600 at that same price and €26 of tax is
+withheld, realised gain is €100. The remaining open gain falls from €200 to
+€100. The month therefore shows €0 Gross result and €74 Net realised result.
+The €26 drop in estimated tax offsets the €26 withholding. The adjusted
+cost for the month is zero, the share of Gross result is unavailable, and
+estimated after-cost TWR is zero while the remaining shares stay invested.
+
+The estimate requires quoted prices for the open holdings at its valuation
+checkpoints and a positive capital base for each linked subperiod. A full
+portfolio closure within the period follows the ordinary TWR availability
+rule in §2.2. The page displays unavailable results as a dash. Portfolio
+performance outside this report continues to use the standard return
+bases described in §2.
+
+If holdings remain and the final estimated net value is exactly zero, a
+positive last subperiod opening can still yield a −100% return. A zero
+base before another subperiod or a negative final net value makes the
+estimate unavailable.
+
+The API exposes the report-specific return in `impact.estimated_twr_net`
+(fraction) and its signed difference from `impact.twr_gross` in
+`impact.estimated_twr_drag_pct_points` (percentage points). The existing
+`impact.twr_net` uses recorded costs. If the opening day's first quote
+covers holdings that lacked a quote the day before, the TWR can have a
+valid starting value while the period change in euro gains is unavailable.
 
 ## 10. Income Statement and Average Savings
 

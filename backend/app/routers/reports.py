@@ -186,7 +186,10 @@ def report_costs_analysis(
     format: str = Query(default="json", pattern="^(json|csv)$"),
     db: Session = Depends(get_db, scope="function"),
 ):
-    """Analyze costs and taxes: gross realized results, grouped costs, and performance impact."""
+    """Report realised and unrealised results, closing tax estimates and cost impact.
+
+    CSV exports the itemised period costs from the report's groups.
+    """
     report = ReportService(db).costs_analysis(date_from=date_from, date_to=date_to)
     if format == "csv":
         rows = [

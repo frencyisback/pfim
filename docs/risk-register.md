@@ -679,15 +679,19 @@ in the period.
 - Realized results, taxes, costs, TWR and denominators use the same inclusive
   effective interval, never beyond today. Inverted intervals and future
   start dates are rejected.
-- `% of invested capital` divides by daily average FIFO cost; the annual
-  cost ratio divides by daily average value and annualizes using actual
-  days. Bases and duration are exposed in the response.
+- The three cost ratios include the period change in estimated open-position
+  tax. Their denominators are average daily FIFO capital, gross earnings
+  including the period change in unrealised gains, and average daily
+  market value. The annual ratio uses actual inclusive days and requires
+  market prices for each open holding throughout the period.
 - Averages weight intervals between change dates without materializing every
   day. Required data is preloaded, and the SQL budget remains constant as
   the number of securities increases.
-- The projected cost KPI compares the change in open-position estimated
-  tax with earnings over the same period. A sale releases the opening
-  estimate. Missing quotes are disclosed and suppress dependent metrics.
+- The estimated after-cost TWR values the portfolio after open-position
+  and outstanding realised tax at cash-flow dates. A sale releases the
+  estimate on the lots sold, and withholding reduces the remaining
+  liability. Missing quotes suppress dependent metrics. The realised
+  net result remains available.
 - The current stamp-duty estimate is separate from groups, totals, net
   results and ratios; tax amounts below one cent are settled using
   `ROUND_HALF_UP`.
@@ -699,8 +703,9 @@ in the period.
 
 PFIM's tax rates and taxation remain informational estimates subject to the
 limitations in §11 of `finance-calculations.md`; period consistency does not
-make them certified tax calculations. For history without quotes, average
-value uses the explicitly declared FIFO fallback described in R-05.
+make them certified tax calculations. The standard portfolio valuation
+can use the FIFO fallback described in R-05. The report's quoted market
+average and its tax-adjusted TWR require observed prices.
 
 ## R-16 — Representability of Persisted Amounts
 
