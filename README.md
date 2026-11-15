@@ -40,6 +40,13 @@ account to a cash account, then add your transactions and investment activity.
 | **Forecasts** | Starting capital, time horizon, monthly income/expenses and growth/return assumptions. | Net worth projections and comparisons of saved scenarios. |
 | **Settings** | Accounts with opening dates/balances, categories, tax rates, exchange rates and CSV mappings. | The configuration used by entry forms, imports and calculations. |
 
+In **Reports → Net Worth**, **Account balances** lists checking, savings and
+cash accounts. **Portfolio value** lists each investment account and the EUR
+value of its holdings, including empty accounts at zero. Accounts without
+quotes carry an explicit cost-estimate label; inconsistent historical
+allocations are identified separately.
+[Valuation rules](docs/finance-calculations.md#42-net-worth-composition-by-account)
+
 In **Reports → Costs and Taxation**, **Gross result** includes the period's
 change in unrealised gains and losses. **Net realised result** shows realised
 earnings after period costs. The closing table shows the estimated tax on open

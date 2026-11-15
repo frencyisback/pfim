@@ -1311,6 +1311,23 @@ FIFO cost with explicit metadata (§5.4). Accounts are included according to
 `opened_on`/`closed_on`, not the current active flag. Reports and exports read
 all filtered transactions in batches, without silent truncation (§5.4).
 
+The snapshot adds `account_composition`: `cash_accounts` carries account ID,
+name and balance; `investment_accounts` carries account ID, name, EUR holdings
+value (nullable) and `cost_fallback_securities`. Quantities are local to each
+account/security pair; eligible quotes and global FIFO fallback follow §5.4.
+The fallback is allocated in proportion to local quantities, preserving the
+existing global cost convention. The new monetary holdings values use
+reconciled cent rounding.
+
+`unallocated_portfolio_value` reconciles the displayed holdings values with
+the aggregate. `issues` identifies accounts and securities with negative
+local quantities, accounts absent at the cutoff or holdings recorded on
+non-investment accounts. Affected visible account valuations are unavailable
+when local quantities are inconsistent. `unallocated_account_balance`
+preserves any legacy cash on investment accounts. The existing `by_account`,
+totals and CSV cash-balance columns retain their contract.
+[Detailed allocation rules](docs/finance-calculations.md#42-net-worth-composition-by-account)
+
 ### 6.9 Forecasts
 
 ```
@@ -1697,10 +1714,13 @@ that reconciles with the KPIs:
 ```text
 Net Worth
 ├── Account balances
-│   ├── Account A
-│   ├── Account B
+│   ├── Checking / savings / cash account A
+│   ├── Checking / savings / cash account B
 │   └── ...
-└── Portfolio
+└── Portfolio value
+    ├── Investment account A — EUR holdings value
+    ├── Investment account B — EUR holdings value
+    └── ...
 ```
 
 Each branch uses the same point-in-time response as the totals. The tab does
@@ -1709,6 +1729,12 @@ explains net-worth composition without duplicating the account-detail API.
 `GET /api/v1/accounts/{id}/history` remains available
 for specific uses; the report displays the **aggregate history** of all
 accounts existing at each date together with the portfolio (§6.8).
+
+Investment accounts appear only under Portfolio value, including empty
+accounts at zero. Each account with an allocated FIFO estimate is labeled.
+Unavailable account values display a dash; allocation issues and unallocated
+amounts are visible so an incomplete breakdown cannot look complete. Legacy
+investment-account cash is shown separately under Account balances.
 
 **Available cash and runway:** available cash (sum of checking accounts only,
 `type=checking`, existing on the snapshot date), average monthly spending over the

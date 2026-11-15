@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — Net Worth composition by account
+
+- **Account balances** lists checking, savings and cash accounts;
+  **Portfolio value** lists investment accounts with their EUR holdings value.
+  Empty investment accounts remain visible at zero.
+- Account valuations use local quantities and the report-date EUR quotes.
+  Without a quote, the existing global FIFO estimate is allocated by quantity
+  and labeled as a cost estimate. Historical allocation issues are disclosed
+  with an unallocated amount, preserving the aggregate valuation.
+- The API adds `account_composition`. Existing totals, `by_account`, the CSV
+  contract and the database schema retain their meanings.
+  [Calculation rules](docs/finance-calculations.md#42-net-worth-composition-by-account)
+
 ### Changed — Costs and Taxation performance metrics
 
 - **Investment result (gross)** includes the change in unrealised gains and

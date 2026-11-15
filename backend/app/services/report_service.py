@@ -6,6 +6,7 @@ import datetime as dt
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.finance.capital_gains import capital_gains_tax, remaining_capital_gains_tax
@@ -16,6 +17,7 @@ from app.finance.periods import (
     trailing_year_start,
 )
 from app.finance.statistics import winsorized_mean
+from app.models.transaction import Transaction
 from app.repositories.account_repo import AccountRepository
 from app.repositories.category_repo import CategoryRepository
 from app.repositories.income_event_repo import IncomeEventRepository
@@ -57,7 +59,8 @@ from app.schemas.report import (
     UnrealizedTaxProjection,
     UnrealizedTaxSnapshot,
 )
-from app.services.account_service import AccountService
+from app.services.account_service import AccountService, account_is_present_on
+from app.services.net_worth_composition import account_composition
 from app.services.performance_service import PerformanceService, PortfolioValuation
 from app.services.portfolio_cost_service import COST_TYPE_LABELS
 from app.services.portfolio_service import PortfolioService
@@ -146,28 +149,38 @@ class ReportService:
         # Historical snapshots use opened_on/closed_on, not current active status. Legacy NULL
         # values mean unknown endpoints and are included without inventing backfill dates.
         #
-        accounts = self.account_repo.list(only_active=False, as_of_date=as_of_date)
+        all_accounts = self.account_repo.list(only_active=False)
+        accounts = [a for a in all_accounts if account_is_present_on(a, as_of_date)]
+        balances = {a.id: Decimal(a.opening_balance) for a in accounts}
+        # Sum persisted EUR amounts in Decimal, just as AccountService.get_balance does.
+        # A single read avoids one account lookup and transaction query for every row.
+        movements = self.db.execute(
+            select(Transaction.account_id, Transaction.amount_eur).where(
+                Transaction.date <= as_of_date
+            )
+        )
+        for account_id, amount_eur in movements:
+            if account_id in balances:
+                balances[account_id] += Decimal(amount_eur)
 
         by_account = []
         total_accounts_balance = Decimal("0")
         liquid_balance = Decimal("0")
         for a in accounts:
-            balance_info = self.account_service.get_balance(a.id, as_of_date=as_of_date)
-            total_accounts_balance += balance_info.balance
+            balance = balances[a.id]
+            total_accounts_balance += balance
             # Available cash sums checking accounts only. Savings and cash accounts remain part of
             # total net worth.
             if a.type == "checking":
-                liquid_balance += balance_info.balance
-            by_account.append(
-                {"account_id": a.id, "name": a.name, "balance": str(balance_info.balance)}
-            )
+                liquid_balance += balance
+            by_account.append({"account_id": a.id, "name": a.name, "balance": str(balance)})
 
-        portfolio_values, portfolio_fallbacks = (
-            self.performance_service.portfolio_value_series_details(
-                [as_of_date], include_same_day_trades=True
-            )
-        )
-        total_portfolio_value = portfolio_values[as_of_date]
+        trades = self.trade_repo.list(date_to=as_of_date)
+        prices = self.price_repo.list_all(date_to=as_of_date)
+        valuation = self.performance_service.portfolio_valuations(
+            [as_of_date], include_same_day_trades=True, trades=trades, prices=prices
+        )[as_of_date]
+        total_portfolio_value = valuation.value
 
         avg_expenses = self._average_monthly_expenses(as_of_date)
         runway = (
@@ -182,10 +195,19 @@ class ReportService:
             total_portfolio_value=total_portfolio_value,
             net_worth=total_accounts_balance + total_portfolio_value,
             by_account=by_account,
+            account_composition=account_composition(
+                accounts=all_accounts,
+                balances=balances,
+                trades=trades,
+                prices=prices,
+                securities=self._securities_by_id(),
+                as_of=as_of_date,
+                portfolio_value=total_portfolio_value,
+            ),
             liquid_balance=liquid_balance,
             average_monthly_expenses=avg_expenses,
             runway_months=runway,
-            portfolio_valuation=self._portfolio_valuation_metadata(portfolio_fallbacks[as_of_date]),
+            portfolio_valuation=self._portfolio_valuation_metadata(valuation.cost_fallbacks),
         )
 
     def _average_monthly_expenses(self, as_of_date: dt.date) -> Decimal | None:
