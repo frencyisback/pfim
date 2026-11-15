@@ -7,12 +7,33 @@ export interface PortfolioValuationMetadata {
   cost_fallback_securities: { security_id: number; ticker: string; name: string }[];
 }
 
+export interface NetWorthAccountComposition {
+  cash_accounts: { account_id: number; name: string; balance: string }[];
+  investment_accounts: {
+    account_id: number;
+    name: string;
+    /** EUR cents, reconciled to the displayed portfolio total; null if attribution is unavailable. */
+    value: string | null;
+    cost_fallback_securities: PortfolioValuationMetadata["cost_fallback_securities"];
+  }[];
+  unallocated_portfolio_value: string;
+  unallocated_account_balance: string;
+  issues: {
+    account_id: number;
+    name: string;
+    security_id: number;
+    ticker: string;
+    reason: "negative_quantity" | "account_not_present" | "not_investment_account";
+  }[];
+}
+
 export interface NetWorthReport {
   as_of_date: string;
   total_accounts_balance: string;
   total_portfolio_value: string;
   net_worth: string;
   by_account: { account_id: number; name: string; balance: string }[];
+  account_composition: NetWorthAccountComposition;
   /** Sum of checking account balances only. */
   liquid_balance: string;
   average_monthly_expenses: string | null;

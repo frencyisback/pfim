@@ -350,6 +350,51 @@ security IDs; Dashboard and Net Worth display the corresponding warning.
 Entering a reliable historical quote removes the fallback from the date
 when that quote becomes available.
 
+### 4.2 Net Worth Composition by Account
+
+The Net Worth snapshot adds `account_composition` for the tree in Reports.
+`cash_accounts` contains checking, savings and cash balances;
+`investment_accounts` contains the EUR value of each investment account's
+holdings. Empty investment accounts appear with zero value. Both lists use
+the snapshot's inclusive opening/closing dates, accept unknown legacy dates,
+and are ordered by name and ID. Current active status is not a historical
+filter. Cash associated with trading stays on its recorded reference account
+and is counted once.
+
+For each `(account_id, security_id)` pair, quantity is purchases minus sales
+through the cutoff. With a quote, multiply that quantity by the latest
+eligible `price_close × fx_rate`, using the same price rule as §4.1. A sale
+on one account changes that account's quantity only. The calculation loads
+trades, prices and account balances in batches rather than issuing one
+valuation query per account.
+
+FIFO cost and realised taxation remain global per security (§1). When a
+quote is missing, allocate the security's global remaining FIFO cost to the
+accounts in proportion to their remaining quantities. Each affected account
+declares `cost_fallback_securities`; this is an **allocated cost estimate**,
+not that account's historical acquisition cost or a market quote. For example,
+if the global remaining cost is EUR 300 and accounts hold two units and one
+unit, their estimates are EUR 200 and EUR 100.
+
+Valuation and allocation use Decimal arithmetic. New account values are
+reported in cents with reconciled rounding: the available account values
+plus `unallocated_portfolio_value` sum to the aggregate portfolio value
+rounded to cents. Aggregate valuation keeps its existing precision.
+
+Inconsistent legacy records remain readable. Negative local quantities make
+the affected visible account valuations unavailable (`value=null`). Holdings
+on an account absent at the cutoff, or on a non-investment account, are not
+assigned to a visible investment account. `issues` identifies the account,
+security and reason. The unallocated amount reconciles the aggregate with the
+values that can be shown, and the page reports issues even when that amount
+is zero. Any legacy cash balance on an investment account is separately
+declared in `unallocated_account_balance` and retained in Account balances.
+No records are rewritten by this read-only report.
+
+The original `by_account`, aggregate fields and net-worth CSV retain their
+cash-balance contract; the CSV does not export the new holdings breakdown.
+The database schema and backup format are unchanged.
+
 ---
 
 ## 5. Net Worth Projection — `finance/forecast.py`
@@ -539,8 +584,10 @@ Tax recorded as a `tax` or `capital_gains_tax` cost **on a sale** counts as
 
 **Available cash** is the sum of EUR balances of `checking` accounts present
 on the snapshot date. Negative checking-account balances are included.
-Savings, cash and investment accounts contribute to account balances and
-total net worth, but not to this available cash figure.
+Savings and cash balances also contribute to net worth. Investment accounts
+contribute through their holdings under Portfolio value (§4.2). These amounts
+do not enter the available cash figure. Any legacy investment-account cash
+is retained separately in Account balances for reconciliation.
 
 Reference: specification §7.5. The calculation lives in
 `ReportService._average_monthly_expenses`; the pure primitives

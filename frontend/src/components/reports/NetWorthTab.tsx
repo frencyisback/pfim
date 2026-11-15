@@ -18,6 +18,7 @@ import CollapsibleTable from "@/components/common/CollapsibleTable";
 import SortableHeader from "@/components/common/SortableHeader";
 import { pctOrDash } from "@/components/reports/shared";
 import { SavingsRateMetrics } from "@/components/reports/SavingsRateMetrics";
+import { NetWorthComposition } from "@/components/reports/NetWorthComposition";
 import { formatEur } from "@/lib/formatters";
 import { getPortfolioCostFallbackWarning } from "@/lib/portfolioValuation";
 import { useTableSort } from "@/lib/useTableSort";
@@ -253,93 +254,6 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
               </table>
             </div>
           </CollapsibleTable>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Shows the sum producing net worth. Account details use the same
- * point-in-time snapshot as totals, so they cannot diverge from KPIs. */
-function NetWorthComposition({ netWorth }: { netWorth: NetWorthReport }) {
-  const fallbackWarning = getPortfolioCostFallbackWarning(netWorth.portfolio_valuation);
-
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-medium text-gray-700">Net worth composition</h3>
-          <p className="mt-1 text-xs text-gray-500">
-            Snapshot on {netWorth.as_of_date}: each branch explains its contribution to the total.
-          </p>
-        </div>
-        <span className="text-xs text-gray-400">Account balances + Portfolio value</span>
-      </div>
-
-      <div role="tree" aria-label="Net worth calculation" className="max-w-3xl">
-        <div
-          role="treeitem"
-          aria-expanded="true"
-          className="flex items-center justify-between gap-4 rounded-md bg-gray-900 px-4 py-3 text-white"
-        >
-          <span className="font-semibold">Net worth</span>
-          <span className="font-semibold tabular-nums">
-            {formatEur(Number(netWorth.net_worth))}
-          </span>
-        </div>
-
-        <div role="group" className="ml-5 space-y-3 border-l-2 border-gray-200 pb-1 pl-5 pt-3">
-          <div role="treeitem" aria-expanded="true">
-            <div className="flex items-center justify-between gap-4 rounded-md border border-sky-200 bg-sky-50 px-4 py-2.5">
-              <span className="font-medium text-sky-950">Account balances</span>
-              <span className="font-semibold tabular-nums text-sky-950">
-                {formatEur(Number(netWorth.total_accounts_balance))}
-              </span>
-            </div>
-            <div role="group" className="ml-5 border-l border-sky-200 pl-4 pt-2">
-              {netWorth.by_account.length > 0 ? (
-                <ul className="space-y-1.5">
-                  {netWorth.by_account.map((account) => (
-                    <li
-                      role="treeitem"
-                      key={account.account_id}
-                      className="flex items-center justify-between gap-4 rounded border border-gray-100 bg-gray-50 px-3 py-2 text-sm"
-                    >
-                      <span className="min-w-0 truncate text-gray-700" title={account.name}>
-                        {account.name}
-                      </span>
-                      <span className="shrink-0 tabular-nums text-gray-900">
-                        {formatEur(Number(account.balance))}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="rounded bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                  No accounts present on the report date.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div
-            role="treeitem"
-            className="flex items-center justify-between gap-4 rounded-md border border-violet-200 bg-violet-50 px-4 py-2.5"
-          >
-            <span className="font-medium text-violet-950">Portfolio value</span>
-            <span className="font-semibold tabular-nums text-violet-950">
-              {formatEur(Number(netWorth.total_portfolio_value))}
-            </span>
-          </div>
-        </div>
-      </div>
-      {fallbackWarning && (
-        <div
-          role="status"
-          className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
-        >
-          <strong>Estimated valuation:</strong> for {fallbackWarning.securitiesLabel}{" "}
-          no quote exists on or before the report date. The value therefore uses FIFO acquisition cost; enter a historical price to obtain a market valuation.
         </div>
       )}
     </div>

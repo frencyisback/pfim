@@ -309,8 +309,12 @@ valued using future information.
   Securities.
 - `net-worth` rejects a future `as_of_date` and correctly includes same-day
   operations.
-- Individual snapshots and history use the same `portfolio_value_series`
-  valuation.
+- Individual snapshots and history use the same portfolio valuation engine.
+- The composition tree separates cash balances from investment-account
+  holdings. Local quantities determine account ownership, while the global
+  FIFO convention remains unchanged. Missing-price cost estimates are
+  allocated by quantity and declared per account. Legacy allocation issues
+  retain an explicit unallocated amount instead of silently losing value.
 - If no valid price exists by the date, the position remains included at
   FIFO cost. The response exposes `portfolio_valuation.cost_fallback_used`
   and the list of affected securities.
@@ -321,6 +325,11 @@ valued using future information.
 - `test_point_in_time_reports.py`, `test_performance_contract.py` and the
   frontend `portfolioValuation` tests cover cutoffs, future dates, fallback
   and warnings.
+- `test_net_worth_account_composition.py` and the frontend composition tests
+  cover shared securities across investment accounts, partial sales, cash
+  references, allocated fallback, cent reconciliation and incomplete legacy
+  attribution. Query-count coverage checks that adding accounts and securities
+  does not add a valuation query for each one.
 
 ### Residual Risk
 

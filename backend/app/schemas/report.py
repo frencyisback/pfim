@@ -26,12 +26,45 @@ class PortfolioValuationMetadata(BaseModel):
     cost_fallback_securities: list[PortfolioValuationFallback] = Field(default_factory=list)
 
 
+class NetWorthCashAccount(BaseModel):
+    account_id: int
+    name: str
+    balance: Decimal
+
+
+class NetWorthInvestmentAccount(BaseModel):
+    account_id: int
+    name: str
+    # EUR cents reconciled with the displayed portfolio total. None means the account's
+    # holdings cannot be attributed reliably from the recorded history.
+    value: Decimal | None
+    cost_fallback_securities: list[PortfolioValuationFallback]
+
+
+class NetWorthAllocationIssue(BaseModel):
+    account_id: int
+    name: str
+    security_id: int
+    ticker: str
+    reason: Literal["negative_quantity", "account_not_present", "not_investment_account"]
+
+
+class NetWorthAccountComposition(BaseModel):
+    cash_accounts: list[NetWorthCashAccount]
+    investment_accounts: list[NetWorthInvestmentAccount]
+    unallocated_portfolio_value: Decimal
+    # Legacy cash recorded on investment accounts remains in the original cash total.
+    unallocated_account_balance: Decimal
+    issues: list[NetWorthAllocationIssue]
+
+
 class NetWorthReport(BaseModel):
     as_of_date: dt.date
     total_accounts_balance: Decimal
     total_portfolio_value: Decimal
     net_worth: Decimal
     by_account: list[dict]
+    account_composition: NetWorthAccountComposition
     # Cash and runway: sum checking accounts only (type=checking).
     liquid_balance: Decimal = Decimal("0")
     average_monthly_expenses: Decimal | None = None
