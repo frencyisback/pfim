@@ -1345,6 +1345,12 @@ POST   /api/v1/forecasts/run/{id}            # Run a scenario and return the pro
 POST   /api/v1/forecasts/compare             # Compare multiple scenarios
 ```
 
+Each run returns the saved record in `scenario` along with `opening_cash`,
+`opening_portfolio_value` and their sum, `opening_net_worth`. These EUR
+decimal strings describe the opening on the base date, before the first
+year of growth or contributions. Each entry in a comparison's `results`
+uses the same response format.
+
 ### 6.10 CSV Import Templates
 
 ```
@@ -1906,7 +1912,19 @@ expenses, growth rates, and the three returns require an explicit finite value: 
 is valid where allowed and is not inferred from an empty field. The horizon is
 an integer from 1 to 50. Automatic net worth is selected initially;
 choosing a specific amount also requires a finite value in that field.
-Saved scenarios retain their own parameters.
+Each row in **Saved scenarios** expands to show that scenario's base date,
+horizon, starting capital mode or manual amount, monthly income and
+expenses, both growth rates, pessimistic/base/optimistic annual returns,
+monthly investment rule and dated contributions or withdrawals. Show
+annual rates as percentages and cash amounts in EUR. Automatic investment
+and a fixed €0 monthly investment have distinct meanings.
+
+For automatic starting capital, the saved row displays the mode. Opening
+cash, investment value and total come from the execution on the scenario's
+base date. The Run chart displays the assumptions and opening amounts
+used for its projection. The comparison displays a summary for each
+selected scenario alongside the base curves. A manual opening amount
+is all cash with €0 initially invested.
 
 The form uses automatic investment of positive annual cash flow. The API also
 accepts a custom monthly investment and extraordinary contributions (§10.3).

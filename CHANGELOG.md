@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added — Forecast scenario details
+
+- Expand a saved scenario to see its cash flows, rates, investment rule
+  and dated contributions. Run and Compare show the assumptions for each
+  projection and the opening cash, investments and total used. Saved rows
+  identify automatic starting capital by mode. Each execution resolves
+  the balances on the scenario's base date.
+
 ### Changed — Financial reports and forecasts
 
 - Household savings and the period savings rate exclude the principal exchanged in trades and include fees, even for legacy charges with an unknown settlement account. The monthly CSV also includes economic income, spending, savings and the rate. The cash figures remain available alongside them.

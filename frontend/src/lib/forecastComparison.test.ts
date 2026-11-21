@@ -17,6 +17,10 @@ function result(id: number, name: string, amounts: string[]): ForecastRunResult 
   return {
     scenario_id: id,
     scenario_name: name,
+    scenario: { id, name, base_date: "2026-06-01", horizon_years: amounts.length, description: null, parameters: {} },
+    opening_cash: "0",
+    opening_portfolio_value: "0",
+    opening_net_worth: "0",
     scenarios: { base, optimistic: base, pessimistic: base },
   };
 }

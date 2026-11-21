@@ -19,6 +19,7 @@ from app.schemas.forecast import (
     ForecastRunResult,
     ForecastScenarioCreate,
     ForecastScenarioParameters,
+    ForecastScenarioRead,
     ScenarioProjectionRead,
     YearProjectionRead,
 )
@@ -166,7 +167,13 @@ class ForecastService:
         }
 
         return ForecastRunResult(
-            scenario_id=scenario.id, scenario_name=scenario.name, scenarios=scenarios_read
+            scenario_id=scenario.id,
+            scenario_name=scenario.name,
+            scenario=ForecastScenarioRead.model_validate(self.to_read_dict(scenario)),
+            opening_cash=starting_cash,
+            opening_portfolio_value=starting_portfolio,
+            opening_net_worth=starting_cash + starting_portfolio,
+            scenarios=scenarios_read,
         )
 
     def compare_scenarios(self, scenario_ids: list[int]) -> list[ForecastRunResult]:

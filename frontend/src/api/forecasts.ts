@@ -27,6 +27,10 @@ export interface ScenarioProjection {
 export interface ForecastRunResult {
   scenario_id: number;
   scenario_name: string;
+  scenario: ForecastScenario;
+  opening_cash: string;
+  opening_portfolio_value: string;
+  opening_net_worth: string;
   scenarios: {
     pessimistic: ScenarioProjection;
     base: ScenarioProjection;

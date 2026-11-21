@@ -5,10 +5,11 @@ import json
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import event
 
 from app.models.forecast_scenario import ForecastScenario
 from app.services.forecast_service import ForecastService
-from tests.integration.conftest import TestingSessionLocal
+from tests.integration.conftest import TestingSessionLocal, engine
 
 
 def _scenario_payload(**overrides):
@@ -77,16 +78,56 @@ def test_run_scenario_not_found_returns_404(client):
 
 
 def test_compare_scenarios(client):
-    s1 = client.post("/api/v1/forecasts/scenarios", json=_scenario_payload(name="S1")).json()
+    cash = client.post(
+        "/api/v1/accounts",
+        json={
+            "name": "Savings",
+            "type": "savings",
+            "opening_balance": 500,
+            "opened_on": "2025-12-30",
+        },
+    )
+    assert cash.status_code == 201
+    s1 = client.post("/api/v1/forecasts/scenarios", json=_scenario_payload(name="Plan")).json()
     s2 = client.post(
         "/api/v1/forecasts/scenarios",
-        json=_scenario_payload(name="S2", horizon_years=5),
+        json=_scenario_payload(name="Plan", horizon_years=5),
     ).json()
 
-    resp = client.post("/api/v1/forecasts/compare", json={"scenario_ids": [s1["id"], s2["id"]]})
+    manual = _scenario_payload(name="Plan")
+    manual["parameters"]["starting_net_worth"] = -25
+    manual["parameters"]["cash_flow"]["monthly_income"] = 500
+    s3 = client.post("/api/v1/forecasts/scenarios", json=manual).json()
+    queries = []
+
+    def observe(conn, cursor, statement, parameters, context, executemany):
+        queries.append(" ".join(statement.lower().split()))
+
+    event.listen(engine, "before_cursor_execute", observe)
+    try:
+        resp = client.post(
+            "/api/v1/forecasts/compare", json={"scenario_ids": [s1["id"], s2["id"], s3["id"]]}
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", observe)
     assert resp.status_code == 200
-    body = resp.json()
-    assert len(body["results"]) == 2
+    results = resp.json()["results"]
+    assert [r["scenario"] for r in results] == [s1, s2, s3]
+    for calculated, saved in zip(results, (s1, s2, s3), strict=True):
+        assert calculated["scenario_id"] == saved["id"]
+        assert calculated["scenario_name"] == saved["name"]
+    openings = [
+        (
+            Decimal(r["opening_cash"]),
+            Decimal(r["opening_portfolio_value"]),
+            Decimal(r["opening_net_worth"]),
+        )
+        for r in results
+    ]
+    assert openings == [(500, 0, 500), (500, 0, 500), (-25, 0, -25)]
+    # All automatic scenarios on this date share the same opening valuation.
+    for table in ("transactions", "trades"):
+        assert sum(f" from {table} " in sql for sql in queries) == 1
 
 
 def test_compare_requires_at_least_two(client):
@@ -217,7 +258,8 @@ def test_legacy_extra_fields_remain_readable_and_ignored_during_execution(client
     saved = _replace_saved_parameters(scenario["id"], parameters)
     after = client.post(f"/api/v1/forecasts/run/{scenario['id']}")
     assert after.status_code == 200
-    assert after.json() == before
+    assert after.json()["scenarios"] == before["scenarios"]
+    assert after.json()["scenario"]["parameters"] == parameters
     assert (
         client.get(f"/api/v1/forecasts/scenarios/{scenario['id']}").json()["parameters"]
         == parameters
@@ -275,6 +317,10 @@ def test_auto_uses_historical_cash_trades_and_quotes_at_the_same_cutoff(client):
     scenario = create("forecasts/scenarios", **params)
     endpoint = f"/api/v1/forecasts/run/{scenario['id']}"
     before = client.post(endpoint).json()
+    assert Decimal(before["opening_cash"]) == 900
+    assert Decimal(before["opening_portfolio_value"]) == 150
+    assert Decimal(before["opening_net_worth"]) == 1050
+    assert before["scenario"] == scenario
     first = before["scenarios"]["base"]["years"][0]
     assert Decimal(first["cash_balance"]) == 900
     assert Decimal(first["portfolio_value"]) == Decimal("160.5")

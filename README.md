@@ -40,6 +40,14 @@ account to a cash account, then add your transactions and investment activity.
 | **Forecasts** | Base date, starting capital, time horizon, monthly income/expenses and growth/return assumptions. | Projections starting from the recorded balances and holdings on the base date or from a manual amount. |
 | **Settings** | Accounts with opening dates/balances, categories, tax rates, exchange rates and CSV mappings. | The configuration used by entry forms, imports and calculations. |
 
+In **Forecasts → Saved scenarios**, expand a scenario to inspect its starting
+capital mode, cash flows, growth rates, investment assumptions and dated
+contributions or withdrawals. An automatic start is shown as **Automatic**
+until you run it. The summary beside the projection then shows the starting
+cash, investments and total used on the base date. In a comparison, each
+base curve has its own scenario summary.
+[Forecast assumptions](docs/finance-calculations.md#51-starting-net-worth-and-saved-scenarios)
+
 In **Reports → Net Worth**, **Account balances** lists checking, savings and
 cash accounts. **Portfolio value** lists each investment account and the EUR
 value of its holdings, including empty accounts at zero. Accounts without

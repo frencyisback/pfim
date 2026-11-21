@@ -128,6 +128,14 @@ class ScenarioProjectionRead(BaseModel):
 class ForecastRunResult(BaseModel):
     scenario_id: int
     scenario_name: str
+    scenario: ForecastScenarioRead = Field(description="Saved scenario used for this calculation.")
+    opening_cash: Decimal = Field(description="Starting cash in EUR on the scenario base date.")
+    opening_portfolio_value: Decimal = Field(
+        description="Starting invested portfolio value in EUR on the scenario base date."
+    )
+    opening_net_worth: Decimal = Field(
+        description="Sum of opening cash and portfolio value in EUR."
+    )
     scenarios: dict[str, ScenarioProjectionRead]
 
 

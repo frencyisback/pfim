@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -22,6 +22,7 @@ import {
   type ForecastRunResult,
 } from "@/api/forecasts";
 import CollapsibleTable from "@/components/common/CollapsibleTable";
+import ForecastAssumptions from "@/components/ForecastAssumptions";
 import SortableHeader from "@/components/common/SortableHeader";
 import QueryStateNotice from "@/components/common/QueryStateNotice";
 import { formatEur } from "@/lib/formatters";
@@ -45,6 +46,7 @@ export default function Forecasts() {
   const [result, setResult] = useState<ForecastRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [comparison, setComparison] = useState<ForecastCompareResult | null>(null);
   type ScenarioSortKey = "name" | "horizon";
   const scenarioSort = useTableSort<ForecastScenario, ScenarioSortKey>(
@@ -320,6 +322,10 @@ export default function Forecasts() {
           <h3 className="mb-3 text-sm font-medium text-gray-600">
             Net worth projection — {result.scenario_name}
           </h3>
+          <section className="mb-4" aria-label="Scenario assumptions">
+            <h4 className="mb-2 text-sm font-medium">Scenario assumptions</h4>
+            <ForecastAssumptions scenario={result.scenario} result={result} />
+          </section>
           <ResponsiveContainer width="100%" height={320}>
             <AreaChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -373,35 +379,52 @@ export default function Forecasts() {
             </thead>
             <tbody>
               {scenarioSort.sortedRows.map((s) => (
-                <tr key={s.id} className="border-t border-gray-100">
-                  <td className="px-3 py-2">
-                    <input
-                      type="checkbox"
-                      aria-label={`Include ${s.name} in comparison`}
-                      checked={selectedIds.includes(s.id)}
-                      onChange={() => toggleSelected(s.id)}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    {s.name}
-                    <div className="text-xs text-gray-500">Base date {s.base_date}</div>
-                  </td>
-                  <td className="px-3 py-2">{s.horizon_years} years</td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      onClick={() => handleRun(s.id)}
-                      className="mr-3 text-xs text-blue-600 hover:underline"
-                    >
-                      Run
-                    </button>
-                    <button
-                      onClick={() => deleteScenario.mutate(s.id)}
-                      className="text-xs text-gray-400 hover:text-red-600"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
+                <Fragment key={s.id}>
+                  <tr className="border-t border-gray-100">
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Include ${s.name} in comparison`}
+                        checked={selectedIds.includes(s.id)}
+                        onChange={() => toggleSelected(s.id)}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      {s.name}
+                      <div className="text-xs text-gray-500">Base date {s.base_date}</div>
+                    </td>
+                    <td className="px-3 py-2">{s.horizon_years} years</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        aria-expanded={expandedId === s.id}
+                        aria-controls={`saved-assumptions-${s.id}`}
+                        onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
+                        className="mr-3 text-xs text-blue-600 hover:underline"
+                      >
+                        {expandedId === s.id ? "Hide assumptions" : "View assumptions"}
+                      </button>
+                      <button
+                        onClick={() => handleRun(s.id)}
+                        disabled={createScenario.isPending || runForecast.isPending}
+                        className="mr-3 text-xs text-blue-600 hover:underline disabled:opacity-50"
+                      >
+                        Run
+                      </button>
+                      <button
+                        onClick={() => deleteScenario.mutate(s.id)}
+                        className="text-xs text-gray-400 hover:text-red-600"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                  <tr id={`saved-assumptions-${s.id}`} hidden={expandedId !== s.id}>
+                    <td colSpan={4} className="border-t border-gray-100 bg-gray-50 px-3 py-3">
+                      {expandedId === s.id && <ForecastAssumptions scenario={s} />}
+                    </td>
+                  </tr>
+                </Fragment>
               ))}
               {scenarios?.length === 0 && (
                 <tr>
@@ -458,6 +481,18 @@ export default function Forecasts() {
                 ))}
               </LineChart>
             </ResponsiveContainer>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {comparison.results.map((run, index) => (
+              <details key={run.scenario_id} open className="rounded-lg border border-gray-200 bg-white p-3">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Assumptions — {comparisonChart.series[index].label}
+                </summary>
+                <div className="mt-3">
+                  <ForecastAssumptions scenario={run.scenario} result={run} />
+                </div>
+              </details>
+            ))}
           </div>
         </section>
       )}

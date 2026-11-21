@@ -487,6 +487,22 @@ investments use trades and the latest available quotes through that same day,
 including the ordinary FIFO cost fallback. Later activity cannot alter this
 opening snapshot. A correction dated on or before the base date can.
 
+Expand an entry in **Forecasts → Saved scenarios** to review its base date,
+horizon, starting capital mode, monthly income and expenses, annual growth
+rates, three annual return assumptions, monthly investment rule and any
+dated contributions or withdrawals. Annual rates are stored as fractions
+and displayed as percentages. Each dated entry has a label and a signed
+EUR amount. A fixed monthly investment of €0 is an explicit choice to
+keep savings in cash.
+
+An unexecuted automatic start has a mode and base date. **Run** resolves
+cash and investments on that date, then displays those two amounts and
+their sum with the projection. With a manual start the specified amount
+is cash and the opening investment value is €0. **Compare** displays
+the assumptions and opening figures used for each selected scenario
+alongside its base curve. This makes it possible to distinguish two
+curves that differ in starting balances from two that differ in returns.
+
 Monthly income and expenses are positive amounts or zero. Each annual
 growth or return assumption must be at least −100%, and pessimistic ≤ base ≤
 optimistic. Equal rates allow a single return assumption. A milestone already
@@ -500,6 +516,13 @@ legacy record remains readable and produces a structured 400
 `VALIDATION_ERROR`, with `scenario_id` and `fields`, without rewriting the
 JSON. Additional historical properties tolerated by the schema remain in
 the record and are ignored during calculation.
+
+For a saved or restored record, omitted optional parameters use the same
+defaults as a new API scenario. The starting mode defaults to automatic,
+income and expense growth to 0%, monthly investment to automatic and
+dated contributions to an empty list. Monthly income, monthly expenses
+and the three return assumptions are required. Legacy dividend switches
+have no effect because the model uses total returns.
 
 Comparison validates all selected scenarios before executing any: if it
 finds invalid parameters, it identifies the scenario preventing comparison
