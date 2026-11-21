@@ -74,6 +74,7 @@ export default function Forecasts() {
 
   const [form, setForm] = useState<ForecastForm>({
     name: "",
+    base_date: todayIso(),
     horizon_years: "",
     startingNetWorthMode: "auto",
     startingNetWorthValue: "",
@@ -97,7 +98,7 @@ export default function Forecasts() {
     try {
       const scenario = await createScenario.mutateAsync({
         name: form.name.trim(),
-        base_date: todayIso(),
+        base_date: form.base_date,
         horizon_years: Number(form.horizon_years),
         parameters: {
           starting_net_worth:
@@ -171,6 +172,17 @@ export default function Forecasts() {
           onChange={(e) => setForm({ ...form, horizon_years: e.target.value })}
         />
 
+        <label className="flex items-center gap-2 text-xs text-gray-500">
+          Base date
+          <input
+            type="date"
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+            required
+            max={form.startingNetWorthMode === "auto" ? todayIso() : undefined}
+            value={form.base_date}
+            onChange={(e) => setForm({ ...form, base_date: e.target.value })}
+          />
+        </label>
         <label className="col-span-full flex flex-wrap items-center gap-2 text-xs text-gray-500">
           Starting net worth:
           <select
@@ -180,7 +192,7 @@ export default function Forecasts() {
               setForm({ ...form, startingNetWorthMode: e.target.value as "auto" | "custom" })
             }
           >
-            <option value="auto">Automatic (actual account balances + portfolio)</option>
+            <option value="auto">Automatic (accounts and portfolio on the base date)</option>
             <option value="custom">Custom amount</option>
           </select>
           {form.startingNetWorthMode === "custom" && (
@@ -201,12 +213,16 @@ export default function Forecasts() {
             The custom amount is entirely initial cash. Zero and negative values are allowed.
           </p>
         )}
+        <p className="col-span-full text-xs text-gray-500">
+          Enter monthly inflows and outflows as positive amounts or zero. Future base dates require a custom starting amount.
+        </p>
 
         <input
           type="number"
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Monthly inflows €"
           aria-label="Monthly inflows in euros"
+          min="0"
           step="0.01"
           required
           value={form.monthly_income}
@@ -217,6 +233,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Monthly outflows €"
           aria-label="Monthly outflows in euros"
+          min="0"
           step="0.01"
           required
           value={form.monthly_expenses}
@@ -228,6 +245,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Annual inflow growth %"
           aria-label="Annual inflow growth as a percentage"
+          min="-100"
           required
           value={form.income_growth_rate_annual}
           onChange={(e) => setForm({ ...form, income_growth_rate_annual: e.target.value })}
@@ -238,6 +256,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Annual outflow growth %"
           aria-label="Annual outflow growth as a percentage"
+          min="-100"
           required
           value={form.expense_growth_rate_annual}
           onChange={(e) => setForm({ ...form, expense_growth_rate_annual: e.target.value })}
@@ -249,6 +268,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Pessimistic return %"
           aria-label="Pessimistic return as a percentage"
+          min="-100"
           required
           value={form.return_pessimistic}
           onChange={(e) => setForm({ ...form, return_pessimistic: e.target.value })}
@@ -259,6 +279,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Base return %"
           aria-label="Base return as a percentage"
+          min="-100"
           required
           value={form.expected_annual_return}
           onChange={(e) => setForm({ ...form, expected_annual_return: e.target.value })}
@@ -269,6 +290,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Optimistic return %"
           aria-label="Optimistic return as a percentage"
+          min="-100"
           required
           value={form.return_optimistic}
           onChange={(e) => setForm({ ...form, return_optimistic: e.target.value })}
@@ -280,7 +302,7 @@ export default function Forecasts() {
           The returns above are <strong>total returns</strong>: they already include dividends and coupons, assumed reinvested. The projection compounds annually, adding each period's savings to the portfolio.
         </p>
         <p className="col-span-full text-xs text-gray-500">
-          Starting net worth represents the base date. Each year ends on its anniversary; contributions after the preceding anniversary through the current anniversary are added at period end, without intrayear returns. Contributions on or before the base date or beyond the horizon are excluded. February 29 becomes February 28 in non-leap years.
+          This form invests positive annual cash flow at each anniversary. The API also accepts a custom monthly investment and dated contributions or withdrawals.
         </p>
 
         <button
@@ -310,6 +332,18 @@ export default function Forecasts() {
               <Area type="monotone" dataKey="Pessimistic" stroke="#ef4444" fill="#ef4444" fillOpacity={0.1} />
             </AreaChart>
           </ResponsiveContainer>
+          {Object.keys(result.scenarios.base.milestones_reached).length > 0 && (
+            <div className="mt-3">
+              <h4 className="text-sm font-medium">Base scenario milestones</h4>
+              <ul className="mt-1 text-sm text-gray-600">
+                {Object.entries(result.scenarios.base.milestones_reached).map(([amount, year]) => (
+                  <li key={amount}>
+                    {formatEur(Number(amount))} — {year === 0 ? "Reached on the base date" : `Year ${year}`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
@@ -348,7 +382,10 @@ export default function Forecasts() {
                       onChange={() => toggleSelected(s.id)}
                     />
                   </td>
-                  <td className="px-3 py-2">{s.name}</td>
+                  <td className="px-3 py-2">
+                    {s.name}
+                    <div className="text-xs text-gray-500">Base date {s.base_date}</div>
+                  </td>
                   <td className="px-3 py-2">{s.horizon_years} years</td>
                   <td className="px-3 py-2 text-right">
                     <button

@@ -9,10 +9,12 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
+from sqlalchemy import event
+
 from app.repositories.price_repo import PriceRepository
 from app.services.performance_service import PerformanceService
 
-from .conftest import TestingSessionLocal
+from .conftest import TestingSessionLocal, engine
 
 
 def _checking(
@@ -202,3 +204,76 @@ def test_net_worth_declares_fifo_cost_fallback_until_a_price_exists(client):
     point = next(row for row in history.json() if row["date"] == as_of.isoformat())
     assert point["portfolio_valuation"]["cost_fallback_used"] is True
     assert point["portfolio_valuation"]["cost_fallback_securities"][0]["security_id"] == security
+
+
+def test_net_worth_history_reads_movements_trades_and_quotes_once_as_accounts_grow(client):
+    start = dt.date.today() - dt.timedelta(days=4)
+    buy, quote, deposit = (start + dt.timedelta(days=i) for i in (1, 2, 3))
+    cash = _checking(client, opening_balance=1000, opened_on=start)
+    broker = _investment(client, cash, opened_on=start)
+    security = _security(client)
+    _trade(client, security, broker, buy, quantity=10, price=10)
+    # A legacy trade without a quote is carried at cost until the independent quote arrives.
+    with TestingSessionLocal() as db:
+        db.delete(PriceRepository(db).get_by_security_and_date(security, buy))
+        db.commit()
+    _price(client, security, quote, close=15)
+    category = client.post("/api/v1/categories", json={"name": "Deposit", "type": "income"})
+    assert category.status_code == 201
+    category_id = category.json()["id"]
+
+    def receive(account_id, amount):
+        response = client.post(
+            "/api/v1/transactions",
+            json={
+                "account_id": account_id,
+                "category_id": category_id,
+                "currency": "EUR",
+                "date": deposit.isoformat(),
+                "amount": amount,
+            },
+        )
+        assert response.status_code == 201, response.text
+
+    def read_and_verify(extra_accounts):
+        statements = []
+
+        def observe(conn, cursor, statement, parameters, context, executemany):
+            sql = " ".join(statement.lower().split())
+            if sql.startswith("select "):
+                statements.append(sql)
+
+        event.listen(engine, "before_cursor_execute", observe)
+        try:
+            response = client.get("/api/v1/reports/net-worth/history")
+        finally:
+            event.remove(engine, "before_cursor_execute", observe)
+        assert response.status_code == 200, response.text
+        rows = response.json()
+        assert [r["date"] for r in rows] == [d.isoformat() for d in (start, buy, quote, deposit)]
+        extra_opening = 50 * extra_accounts
+        cash_values = [
+            1000 + extra_opening,
+            900 + extra_opening,
+            900 + extra_opening,
+            910 + extra_opening + 3 * extra_accounts,
+        ]
+        for row, balance, position in zip(rows, cash_values, [0, 100, 150, 150], strict=True):
+            assert Decimal(row["total_balance"]) == balance
+            assert Decimal(row["portfolio_value"]) == position
+            assert Decimal(row["net_worth"]) == balance + position
+            metadata = row["portfolio_valuation"]
+            fallbacks = [item["security_id"] for item in metadata["cost_fallback_securities"]]
+            assert fallbacks == ([security] if row["date"] == buy.isoformat() else [])
+            assert metadata["cost_fallback_used"] == bool(fallbacks)
+        for table in ("transactions", "trades", "prices"):
+            assert sum(f" from {table} " in sql for sql in statements) == 1
+        return len(statements)
+
+    receive(cash, 10)
+    two_accounts = read_and_verify(0)
+    for _ in range(8):
+        account_id = _checking(client, opening_balance=50, opened_on=start)
+        receive(account_id, 1)
+        receive(account_id, 2)
+    assert read_and_verify(8) == two_accounts

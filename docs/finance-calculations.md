@@ -108,8 +108,8 @@ never needs to consult an exchange-rate table.
 ### 2.1 Simple Return and Total Return
 
 ```
-simple_return = (current_price − cost_basis_price + dividends) / cost_basis_price  (§9.2)
-Total Return  = (ending_value − starting_value + net_income) / starting_value      (§9.5)
+Simple return = (current EUR price − average open EUR cost) / average open EUR cost
+Open-lot total return = (current value − open FIFO cost + attributable distributions − attributable costs) / open FIFO cost
 ```
 
 Both raise `ValueError` if the denominator is zero.
@@ -120,10 +120,28 @@ invested: realized gains do not enter these two metrics. A security bought
 and fully sold, even at a substantial profit, returns `null` for both and
 has zero weight in the portfolio aggregate.
 
-This is the same basis as `total_invested`, which makes the two figures shown
-side by side comparable. Realized results appear in `realized_gain_loss`,
-displayed alongside because return alone does not describe them; **MWR/IRR**
-instead considers every cash flow and therefore includes closed sales.
+For each distribution, PFIM finds the units entitled to the payment in
+the receiving investment account and the fraction of those units still
+held today under FIFO. An ex-date uses the holding immediately before
+that day's trades. When only the payment date is available PFIM uses its
+closing holding. A declared payment quantity larger than the known holding
+keeps the untracked portion out of open-lot performance. The recorded
+payment amount remains intact in the cash ledger.
+
+For example, 100 units costing €1,000 earn a €50 dividend. After 90 are
+sold at an unchanged price, €5 belongs to the remaining €100 cost, for a
+5% open-lot total return. A position closed and reopened begins with its
+new units. Coupons, dividends and principal repayments all contribute their
+attributable cash to total return. Principal repayments are reported
+separately from coupon and dividend income.
+
+With `cost_basis=include`, each remaining FIFO lot carries the same
+fraction of the original purchase costs as of its original quantity.
+Sale costs and portfolio-wide recurring fees enter the cash-flow measures
+of their respective scopes. The aggregate uses the same open-lot numerator
+and sums cost and value in EUR. The separate `total_income_received` field
+is historical coupon and dividend income from funded holdings, including
+holdings subsequently sold.
 
 ### 2.2 Time-Weighted Return (TWR)
 
@@ -146,6 +164,11 @@ Implementation choices not dictated by the formula:
   empty portfolio and zero initial capital, making TWR unavailable for the
   entire history. Earlier flows are discarded: they cannot have moved a
   portfolio that did not exist.
+- Cash distributions enter TWR, XIRR and historical performance income
+  once their account and security have a recorded purchase on or before
+  payment. Payments on a security with no known investment remain visible
+  in the income register. Returned principal is a dated cash flow in TWR
+  and XIRR.
 - **Income and costs also adjust the pre-flow value.** Coupons are a
   withdrawal to the cash account, but the immediately preceding value must
   include the receipt. Similarly, a cost included in return reduces that
@@ -174,7 +197,10 @@ Implementation choices not dictated by the formula:
   `100/105 - 1 = -4.7619%`; with initial income of 10 it returns
   `110/105 - 1 = 4.7619%`. The cost is not counted twice. If the selected
   period starts with an already open position, the basis is `P` instead,
-  and that day's flows are included in the period.
+  and that day's flows are included in the period. For an existing holding,
+  this opening uses the latest quote through the selected first day. A
+  price move on that day can therefore enter the euro result measured from
+  the prior close and remain outside the report TWR.
 - **A valuation immediately before every flow is required** to isolate the
   contribution's effect from actual return. If no imported price exists for
   that date, the position is valued at FIFO cost rather than ignored: on
@@ -209,6 +235,11 @@ so timing affects it. Read it alongside TWR, not as its replacement.
   it assumes regular periods, incompatible with actual trade dates.
 - Sign convention: invested capital is negative; disposals and ending value
   are positive.
+- An individual open position needs a quoted terminal value. Its XIRR
+  is unavailable when the final quote is missing, even if the prior
+  receipts on their own yield a numerical root. A fully closed position's
+  sales already provide its terminal proceeds. Portfolio XIRR follows the
+  aggregate valuation policy, including the disclosed FIFO-cost fallback.
 - **It is already an annual rate** and must not be annualized again. This is
   why the interface shows it only among annual values, never cumulative ones.
 - Flows on the same date are summed in `Decimal`; totals exactly equal to
@@ -231,7 +262,10 @@ annual_return = (1 + cumulative_return)^(365 / days) − 1
 This makes periods of different lengths comparable: +20% in six months and
 +20% in five years are very different results.
 
-- **Days** are counted from the first trade to today.
+- **Days** run from the first trade for cumulative TWR. Open-lot return
+  uses the common purchase date of its remaining FIFO lots. Multiple
+  acquisition dates have no single holding period, so its annualized
+  field is unavailable.
 - It is undefined for nonpositive days, nonfinite return or
   `cumulative_return ≤ −100%` (capital wiped out): it raises `ValueError`,
   translated into `None` by the service.
@@ -251,8 +285,8 @@ This makes periods of different lengths comparable: +20% in six months and
 ## 3. Distribution Yield — `finance/income.py`
 
 ```
-Yield on Cost = income_last_12_months / TOTAL_cost_basis   × 100  (§9.6)
-Current Yield = income_last_12_months / TOTAL_market_value × 100  (§9.7)
+Yield on Cost = trailing coupon and dividend income attributable to open units / open EUR cost × 100
+Current Yield = trailing coupon and dividend income attributable to open units / open EUR market value × 100
 ```
 
 Both return a **percentage** (4.5 means 4.5%), not a fraction. "Last 12 months"
@@ -277,23 +311,26 @@ from the last 365 days separately from income requested through
 `date_from`/`date_to`. The denominator of `portfolio_yield_on_cost_pct` is the
 EUR FIFO cost of positions open at that same `as_of`, therefore also excluding
 future trades. Trailing KPIs remain visible when the table for the selected
-period is empty. Tables, totals and yield on cost per security instead
-continue to use income from the selected period, including future income
-when requested: the interface distinguishes period yield from trailing
-365-day yield. The denominator per security remains current FIFO cost at
-the same `as_of` date.
+period is empty. Tables and cash totals follow the selected period,
+including future entries when requested. Period yield per security uses
+the share of receipts paid through today in that period attributable to
+units still held today, as in §2.1. The FIFO denominator is valued today.
 
-**Totals divided by totals.** The numerator is the amount received across the
-entire position, so the denominator must also cover the entire position:
-total cost basis, not average cost per unit; market value, not unit price.
-Inconsistent units do not produce an error, but a percentage multiplied by
-the number of units — with 100 shares, 5% becomes 500%. The calculation is
-defined only in `finance/income.py`; `/performance/{id}` and
-`dividends_analysis` both call it with the same denominator convention.
+The **monthly average** divides period coupon and dividend income by the
+inclusive count of calendar months covered by the filter. An open start
+begins at the first qualifying receipt. An open end runs through today
+or the latest qualifying receipt if later. A single €120 dividend in a
+January–December filter gives €10 per month. The annual table includes
+zero-income years and compares consecutive calendar years. Growth on a
+zero previous-year base is unavailable. Monthly seasonality sums all
+selected years for each calendar month. The separate returned-capital
+amount records principal repayments independently of income, yields
+and growth.
 
-YoC describes what the capital invested then earns today; Current Yield
-describes what buying now would earn. They diverge more as the price moves
-further from the cost basis.
+YoC compares past distributions on surviving units with their cost.
+Current yield compares those same distributions with today's valuation.
+A positive denominator with zero attributable income yields 0%. A
+missing quote leaves current yield unavailable.
 
 ---
 
@@ -443,8 +480,18 @@ return's effect.
 `starting_net_worth` accepts only `auto` or a finite `Decimal`, including a
 numeric string. Zero and negative values are allowed; arbitrary text, empty
 strings, booleans, `NaN` and infinity are rejected. An explicit amount is
-entirely initial cash; `auto` resolves active account balances and current
-portfolio value separately.
+entirely initial cash. It can be used for a past, present or future base date.
+For `auto`, the base date must be today or earlier. Starting cash uses the
+Net Worth account lifecycle and EUR movement cutoff on that date. Starting
+investments use trades and the latest available quotes through that same day,
+including the ordinary FIFO cost fallback. Later activity cannot alter this
+opening snapshot. A correction dated on or before the base date can.
+
+Monthly income and expenses are positive amounts or zero. Each annual
+growth or return assumption must be at least −100%, and pessimistic ≤ base ≤
+optimistic. Equal rates allow a single return assumption. A milestone already
+met by opening cash plus investments has year index 0, even if net worth
+falls below it during the first projection year.
 
 Creation with invalid parameters returns 422 without inserting anything.
 Before executing a saved scenario, `ForecastService` revalidates its
@@ -473,34 +520,38 @@ truncating the longer one.
 
 ## 6. Cost of Aggregate Reads
 
-Calculations spanning the entire portfolio load data **once** and scan it in
-memory instead of querying the database for every security and every date.
-`PerformanceService.portfolio_value_series` is where this happens: two
-queries followed by one pass with cursors over trades and prices.
+**Single-date valuations.** The positions list, portfolio summary and Net
+Worth snapshot request the latest eligible quote per security. The database
+groups by security, finds its latest date at or before the cutoff and
+returns those rows in one price query. These views load the trade history
+through the cutoff to determine the remaining FIFO lots. The Securities
+page likewise fetches its latest quotes in one `GET /prices/latest` request.
 
-Querying valuation separately for every date makes database work grow with
-the requested history. The batched implementation instead keeps the number
-of queries independent of the number of requested dates; elapsed time still
-depends on data volume and the execution environment.
+**Multi-date valuations.** `PerformanceService.portfolio_value_series`
+uses a bulk trade read and a bulk historical price read for a nonempty set
+of dates. Per-security cursors advance through those inputs in date order.
+The query count is independent of the number of dates. Processing time also
+depends on the number of dates, securities and open lots.
+[`test_portfolio_value_series.py`](../backend/tests/integration/test_portfolio_value_series.py)
+compares valuation results with a reference calculation and checks query counts.
 
-`tests/integration/test_portfolio_value_series.py` retains the naive
-implementation as a **reference** and checks exact equivalence, plus a test
-that fails if cost becomes dependent on the number of requested dates again.
+The complete `/reports/net-worth/history` endpoint reads its accounts together.
+One movement query supplies account IDs, dates and EUR amounts for all daily
+balances. Trades and prices through today supply both the chart dates and
+the valuations at those dates. The query count stays constant as accounts
+are added, while the number of rows and daily values can grow.
+[`test_point_in_time_reports.py`](../backend/tests/integration/test_point_in_time_reports.py)
+checks the query budget and the cash and holdings values at each chart date.
 
-The same applies to `/performance/portfolio`: trades, income and latest
-prices load in bulk and are grouped by security. The portfolio path reuses
-these data rather than calling the query-producing `security_performance`
-path separately for every security.
-`tests/integration/test_performance_query_budget.py` checks that it does not
-become dependent on the number of securities again.
-
-`costs_analysis` also preloads trades, income, recurring costs, prices and
-trade costs, reusing the same snapshot for taxation, average bases and
-gross/net TWR. The query-budget test verifies that the number of queries
-stays constant as securities increase. On the frontend, Securities obtains
-latest prices with a single `GET /prices/latest`, avoiding a request per
-row. The endpoint applies today's cutoff: preparatory future quotes remain
-readable in history but are not shown as current prices.
+**Performance and costs.** `/performance/portfolio` batches the trades,
+income and prices used for its per-security metrics. Portfolio TWR and MWR
+make additional aggregate reads. The costs report preloads trades, income,
+recurring costs, trade costs and historical prices for its tax calculation,
+average capital bases and TWR variants. The query-budget tests compare
+the number of statements for two and ten securities on each endpoint.
+[`test_performance_query_budget.py`](../backend/tests/integration/test_performance_query_budget.py)
+and [`test_costs_period_coherence.py`](../backend/tests/integration/test_costs_period_coherence.py)
+cover those comparisons.
 
 ### 6.1 Observed Unit Prices on Security Detail
 
@@ -589,51 +640,19 @@ contribute through their holdings under Portfolio value (§4.2). These amounts
 do not enter the available cash figure. Any legacy investment-account cash
 is retained separately in Account balances for reconciliation.
 
-Reference: specification §7.5. The calculation lives in
-`ReportService._average_monthly_expenses`; the pure primitives
-`percentile_inc` and `winsorized_mean` are in `finance/statistics.py`.
+The snapshot considers the latest 12 **completed calendar months**, including the snapshot month only when the snapshot falls on its last day. For a snapshot on 15 August 2025, the baseline covers 1 August 2024 through 31 July 2025. August 2025 spending through the 15th is reported separately.
 
-The basis is a sequence of **exactly 12 monthly totals** anchored to the net
-worth snapshot date:
-
-- the first period starts on the first day of the month eleven months earlier;
-- months without transactions are zero and remain in the sample;
-- the snapshot month starts on its first day and ends at `as_of_date`, so
-  it may be partial;
-- only economic expenses are included: transfers between the user's own
-  accounts and securities purchases and sales are excluded;
-- amounts retain their signs and are aggregated before a single sign
-  inversion turns them into positive expenses; individual rows are not
-  converted to absolute values.
-
-P5 and P95 are calculated on the twelve sorted values `x[0] … x[n−1]` using
-the inclusive **type 7** convention, equivalent to `PERCENTILE.INC`:
+For each month with a recorded expense movement, PFIM sums signed EUR expense entries and reverses the sign once. Security purchase/sale settlements and transfers between owned accounts are excluded. A month without expense entries supplies no evidence of typical spending and is omitted. The number of eligible months is `n`. A month with expense entries can have zero net spending.
 
 ```text
-rank(p) = (n − 1) × p
-Pp      = linear interpolation between the two values around rank(p)
+P5, P95          = inclusive type-7 percentiles of the n monthly totals
+average_expenses = Σ min(max(monthly_expenses, P5), P95) / n
+cash_runway      = max(0, checking_balance) / average_expenses
 ```
 
-Each total is then limited to `[P5, P95]`, and the mean still uses all twelve
-elements:
+`average_monthly_expenses` is null if the sample is empty or its mean is nonpositive. Positive checking balances require a positive baseline to produce runway. An exhausted or overdrawn checking balance gives zero months when a positive baseline or positive current partial-month spending provides evidence of spending. With neither, runway is null.
 
-```text
-average_expenses = Σ min(max(monthly_expenses, P5), P95) / 12
-cash_runway      = available_cash / average_expenses
-```
-
-This is **winsorization**, not trimming: it softens both tails without
-removing months or changing the denominator. It applies to the average
-expenses used in the net worth snapshot and cash runway and, on its own
-sample, to the average savings rate (§10). Monthly values in charts and the
-income statement, totals and category analyses remain observed and
-unwinsorized. If the resulting expense mean is not positive, PFIM returns
-`null`; cash runway is also `null` when positive expenses are unavailable
-or available cash is not positive.
-
-Tests fix interpolation, retention of 12 months, both tails, zero months,
-calendar boundaries, the partial current month and exclusion of flows that
-are not economic income or expenses.
+The JSON object `spending_coverage` provides inclusive `window_from`, `window_to`, `months_with_recorded_expenses` and `partial_month_spending` (null at month end). With €3,000 in checking and €1,000 in the one completed month with expense entries, runway is 3 months and the displayed coverage is 1/12. Months with entries can themselves be incompletely recorded. The estimate depends on the user’s data coverage.
 
 ---
 
@@ -650,7 +669,11 @@ beyond today.
 recurring costs and any estimated tax still due on the period's net realised
 gains after sale withholding. A current annual stamp-duty estimate appears
 separately when the interval includes today and no actual duty is recorded
-for the current year. Only the period cost items are exported to CSV.
+on trades or recurring cost records for the current year. Withholding on
+coupons and dividends and withholding on returned principal are reported
+separately in the fiscal summary. The estimate of tax due on sales recognises
+withholding recorded with the sale. Separately entered tax-register payments
+do not settle that estimate. Only the period cost items are exported to CSV.
 
 ### Tax on unrealised gains
 
@@ -674,15 +697,20 @@ open positions the net gain and estimated tax are both zero.
 
 | Period measure | Calculation |
 | --- | --- |
-| Realised gross result | Realised gains + signed realised losses + gross income |
+| Realised gross result | Realised gains + signed realised losses + gross coupon and dividend income |
 | Unrealised gain/loss | Closing net unrealised gain/loss − opening net unrealised gain/loss |
-| Gross result | Realised gross result + period change in unrealised gain/loss |
+| Gross result | Realised gross result + gross principal repaid + period change in unrealised gain/loss |
 | Net realised result | Realised gross result − period costs |
 | Change in estimated tax | Closing open-position tax estimate − opening estimate |
 | Costs including tax change | Period costs + change in estimated tax |
 | Relative to invested capital | 100 × costs including tax change / average daily FIFO invested capital |
 | Relative to gross result | 100 × costs including tax change / gross result |
 | Annual cost ratio (TER-like) | 100 × costs including tax change / average daily portfolio market value × 365 / days included |
+
+The separate `realized.returned_capital_gross` field reconciles the cash side of a
+principal repayment with the change in market value. For example, a holding worth
+€100 that pays back €10 and then quotes at €90 has zero gross economic result
+and no coupon income. PFIM retains the recorded acquisition cost in its tax model.
 
 The three cost ratios require a positive denominator. The annual ratio
 also requires a quoted value for all open holdings on each included day.
@@ -807,10 +835,20 @@ is already a percentage, like `savings_rate_pct`, rather than a fraction to
 multiply by 100 again. Monthly rates, income, expenses and income-statement
 totals retain their original values: limiting affects only the mean.
 
-The Average Savings section in Net Worth reuses this report with a dedicated
-filter, initially covering all history. The sample follows the selected
-period and is not forced to twelve months. It does not change the net worth
-snapshot, performance or the twelve-month cash-runway window.
+### Economic household savings
+
+The same response and its monthly rows also carry `economic_income`, `economic_spending`, `economic_savings` and `economic_savings_rate_pct`, in EUR and percentage points. The monthly CSV appends those columns. Household income includes ordinary income and dividends/coupons after withholding. Spending includes ordinary expense entries, recurring costs, recorded EUR trade fees on the trade date and any withholding charged on a return of capital. The full security purchase/sale amount, the principal returned and transfers between owned accounts are excluded. A sale whose fees consume all proceeds carries an expense even though its net cash entry is zero. Income analysis by category also excludes linked repayments of principal.
+
+```text
+economic_savings = economic_income − economic_spending
+economic_savings_rate_pct = economic_savings / economic_income × 100
+```
+
+The period rate uses period totals, including expenses from months without income. An income denominator of zero or less yields null, while the savings amount and negative savings remain available. Example: €2,000 of salary, €1,000 of household spending and a €1,000 security purchase give zero net cash flow, €1,000 of household savings and a 50% economic savings rate. A €10 trade fee reduces household savings to €990.
+
+Trade fees, recurring charges and investment distributions use their dated source records once, including legacy records with an unknown cash account. Only the corresponding bank movements enter the cash totals.
+
+The Household savings panel in Net Worth shows the period's economic savings and rate alongside the historical average monthly cash surplus rate. Its dedicated filter starts with all history and applies to the panel. The snapshot and runway use their own dates.
 
 Expense/income analysis and average expenses for cash runway continue to
 exclude securities trades: their scope differs from the income statement.

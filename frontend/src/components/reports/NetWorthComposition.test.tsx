@@ -34,6 +34,10 @@ const report: NetWorthReport = {
   liquid_balance: "950",
   average_monthly_expenses: null,
   runway_months: null,
+  spending_coverage: {
+    window_from: "2025-01-01", window_to: "2025-12-31",
+    months_with_recorded_expenses: 0, partial_month_spending: null,
+  },
   portfolio_valuation: {
     price_policy: "latest_price_at_or_before_date_else_fifo_cost",
     cost_fallback_used: false,

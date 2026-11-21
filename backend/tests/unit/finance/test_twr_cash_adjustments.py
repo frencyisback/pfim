@@ -23,6 +23,7 @@ def _trade(trade_id=1, *, date=START, kind="buy", quantity="1", price="100"):
     return SimpleNamespace(
         id=trade_id,
         security_id=1,
+        account_id=1,
         date=date,
         type=kind,
         quantity=quantity,
@@ -40,6 +41,8 @@ def _price(date=START, amount="100"):
 
 def _income(date=MIDDLE, gross="10", net=None):
     return SimpleNamespace(
+        security_id=1,
+        account_id=1,
         payment_date=date,
         total_eur=Decimal(gross),
         net_amount_eur=Decimal(net if net is not None else gross),

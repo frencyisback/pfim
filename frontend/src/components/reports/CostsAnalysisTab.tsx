@@ -28,7 +28,7 @@ import { useTableSort } from "@/lib/useTableSort";
 const COST_GROUP_LABELS: Record<string, { title: string; hint: string }> = {
   taxes: {
     title: "Taxes",
-    hint: "Capital gains tax and withholding on coupons and dividends.",
+    hint: "Capital gains tax and withholding on coupons, dividends and repayments of principal.",
   },
   trading: {
     title: "Trading costs",
@@ -141,7 +141,7 @@ export function CostsAnalysisTab() {
                 positive={data.unrealized_tax.economic_gross_result_eur === null ? undefined : Number(data.unrealized_tax.economic_gross_result_eur) >= 0}
                 formula={
                   <>
-                    <Formula>Capital gains + Capital losses + Gross income + Unrealised gain/loss</Formula>
+                    <Formula>Realised gross result + Principal repaid + Change in unrealised gain/loss</Formula>
                     Includes the change in open gains and losses during this period.
                   </>
                 }
@@ -465,6 +465,7 @@ function ImpactMetrics({ report }: { report: CostsAnalysisReport }) {
     { label: "Average invested capital (FIFO)", value: eurOrDash(impact.average_invested_capital) },
     { label: "Average portfolio value", value: eurOrDash(impact.average_quoted_portfolio_value) },
     { label: "Realised gross result", value: eurOrDash(report.realized.gross_result) },
+    { label: "Principal repaid (gross)", value: eurOrDash(report.realized.returned_capital_gross) },
     { label: "Unrealised gain/loss for the period", value: eurOrDash(projection.unrealized_change_eur) },
     { label: "Gross result", value: eurOrDash(projection.economic_gross_result_eur) },
     { label: "Incurred costs", value: eurOrDash(report.total_costs) },

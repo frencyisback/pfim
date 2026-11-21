@@ -15,12 +15,12 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from app.finance.capital_gains import capital_gains_tax, remaining_capital_gains_tax
-from app.finance.income import current_yield, yield_on_cost
+from app.finance.income import current_yield, open_distribution_fractions, yield_on_cost
 from app.finance.periods import trailing_year_start
 from app.finance.portfolio import (
+    Position,
     PositionTracker,
     as_eur_priced,
-    calculate_position,
     calculate_position_eur,
 )
 from app.finance.returns import annualize, money_weighted_return
@@ -41,6 +41,32 @@ from app.schemas.performance import (
 from app.schemas.report import PortfolioValuationFallback, PortfolioValuationMetadata
 from app.utils.currency import to_eur
 from app.utils.errors import NotFoundError, ValidationErrorPFIM
+
+
+@dataclass
+class _SecurityPerformance:
+    metrics: PerformanceMetrics
+    position: Position
+    open_distributions_less_costs: Decimal
+
+
+def _funded_events(trades: list, events: list) -> list:
+    """Portfolio performance starts with a recorded purchase in each account/security.
+
+    Later receipts, including payments made after sale, remain actual investor
+    cash flows. An income-only holding has no observable invested capital.
+    """
+    first_buy = {}
+    for trade in trades:
+        if trade.type == "buy":
+            key = (trade.security_id, trade.account_id)
+            first_buy[key] = min(first_buy.get(key, trade.date), trade.date)
+    return [
+        event
+        for event in events
+        if (key := (event.security_id, event.account_id)) in first_buy
+        and first_buy[key] <= event.payment_date
+    ]
 
 
 @dataclass
@@ -137,29 +163,27 @@ class PerformanceService:
     ) -> PerformanceMetadata:
         costs = "included" if cost_basis == "include" else "excluded"
         recurring = (
-            "included_at_portfolio_level"
+            "included_in_portfolio_cash_flow_metrics"
             if portfolio and cost_basis == "include"
             else "excluded_at_portfolio_level" if portfolio else "not_allocated_to_security"
         )
         metric_bases = {
             "simple_return": "price_only; independent_of_income_and_cost_basis",
             "realized_gain_loss": "fifo_gross; excludes_trade_and_recurring_costs",
-            "total_income_received": f"income_{income_basis}",
-            "yield_on_cost": f"trailing_12m_income_{income_basis}; costs_independent",
-            "current_yield": f"trailing_12m_income_{income_basis}; costs_independent",
-            "total_return": f"income_{income_basis}; trade_costs_{costs}",
-            "money_weighted_return": f"income_{income_basis}; trade_costs_{costs}",
+            "total_income_received": f"funded_holdings_coupon_and_dividend_income_{income_basis}",
+            "yield_on_cost": f"open_units_trailing_12m_income_{income_basis}; costs_independent",
+            "current_yield": f"open_units_trailing_12m_income_{income_basis}; costs_independent",
+            "total_return": f"open_units_distributions_{income_basis}; open_buy_costs_{costs}",
+            "money_weighted_return": f"funded_distributions_{income_basis}; trade_costs_{costs}",
         }
         if portfolio:
             metric_bases.update(
                 {
-                    "total_return": (
-                        f"income_{income_basis}; trade_costs_{costs}; " f"recurring_costs_{costs}"
-                    ),
                     "time_weighted_return": (
-                        f"income_{income_basis}; trade_costs_{costs}; " f"recurring_costs_{costs}"
+                        f"funded_distributions_{income_basis}; trade_costs_{costs}; recurring_costs_{costs}"
                     ),
-                    "total_return_annualized": "annualized_total_return",
+                    "money_weighted_return": f"funded_distributions_{income_basis}; trade_costs_{costs}; recurring_costs_{costs}",
+                    "total_return_annualized": "annualized_open_lots_with_common_acquisition_date",
                     "time_weighted_return_annualized": "annualized_time_weighted_return",
                 }
             )
@@ -167,7 +191,7 @@ class PerformanceService:
             income_basis=income_basis,
             cost_basis=cost_basis,
             trade_costs_scope=(
-                "included_in_total_return_and_cash_flow_metrics"
+                "open_buy_cost_share_in_total_return; all_trade_costs_in_cash_flow_metrics"
                 if cost_basis == "include"
                 else "excluded_from_performance_metrics"
             ),
@@ -185,24 +209,6 @@ class PerformanceService:
             to_eur(Decimal(latest_price.price_close), Decimal(latest_price.fx_rate))
             if latest_price
             else None
-        )
-
-    @classmethod
-    def _annualized_income(
-        cls, events: list, income_basis: IncomeBasis, *, as_of: dt.date
-    ) -> Decimal:
-        """Sum income on the requested basis over the trailing year. Use the same
-        trailing_year_start boundary as ReportService.dividends_analysis. Filter the caller's
-        preloaded income list instead of querying again.
-        """
-        start = trailing_year_start(as_of)
-        return sum(
-            (
-                cls._income_amount(e, income_basis)
-                for e in events
-                if start <= e.payment_date <= as_of
-            ),
-            Decimal(0),
         )
 
     def security_performance(
@@ -248,7 +254,7 @@ class PerformanceService:
                 if cost_basis == "include"
                 else {}
             ),
-        )
+        ).metrics
 
     def _metrics(
         self,
@@ -261,28 +267,32 @@ class PerformanceService:
         income_basis: IncomeBasis,
         cost_basis: CostBasis,
         costs_by_trade: dict[int, Decimal],
-    ) -> PerformanceMetrics:
+    ) -> _SecurityPerformance:
         """Calculate performance from caller-provided data. Separating reads lets a
         single-security request load its own data while a portfolio request loads all
         securities in batches without repeated queries.
         """
         position_eur = calculate_position_eur(trades)
-        position_native = calculate_position(trades)  # Quantity only (currency invariant).
+        events = _funded_events(trades, events)
+        shares = open_distribution_fractions(trades, events)
+        total_income = open_distributions = trailing_open_income = Decimal(0)
+        start = trailing_year_start(as_of)
+        for event in events:
+            amount = self._income_amount(event, income_basis)
+            open_amount = amount * shares[event.id]
+            open_distributions += open_amount
+            if event.event_type != "return_of_capital":
+                total_income += amount
+                if event.payment_date >= start:
+                    trailing_open_income += open_amount
+        if cost_basis == "include":
+            trade_quantity = {trade.id: trade.quantity for trade in trades}
+            for lot in position_eur.lots:
+                cost = costs_by_trade.get(lot.trade_id, Decimal(0))
+                open_distributions -= cost * lot.quantity_remaining / trade_quantity[lot.trade_id]
 
-        total_income = sum(
-            (self._income_amount(e, income_basis) for e in events),
-            Decimal(0),
-        )
-        trade_costs = sum((costs_by_trade.get(t.id, Decimal(0)) for t in trades), Decimal(0))
-        included_trade_costs = trade_costs if cost_basis == "include" else Decimal(0)
-
-        # Value the entire position, matching total cost basis and received income. Total-to-total
-        # metrics such as total return and current yield use this value; only simple return and
-        # average price operate per unit.
-        #
-        #
         current_value_eur = (
-            current_price_eur * position_native.quantity if current_price_eur is not None else None
+            current_price_eur * position_eur.quantity if current_price_eur is not None else None
         )
 
         simple_ret = None
@@ -294,21 +304,15 @@ class PerformanceService:
             total_ret = total_return(
                 position_eur.total_invested,
                 current_value_eur,
-                net_dividends=total_income - included_trade_costs,
+                net_dividends=open_distributions,
             )
 
-        # YoC and current yield use total income over total values (§9.6, §9.7). Using average
-        # cost and unit price would multiply the percentage by the holding quantity and diverge
-        # from /reports/dividends-analysis, which uses totals.
-        #
-        #
-        annualized_income = self._annualized_income(events, income_basis, as_of=as_of)
         yoc = None
         cur_yield = None
-        if position_eur.total_invested > 0 and annualized_income > 0:
-            yoc = yield_on_cost(annualized_income, position_eur.total_invested)
-        if current_value_eur is not None and current_value_eur > 0 and annualized_income > 0:
-            cur_yield = current_yield(annualized_income, current_value_eur)
+        if position_eur.total_invested > 0:
+            yoc = yield_on_cost(trailing_open_income, position_eur.total_invested)
+        if current_value_eur is not None and current_value_eur > 0:
+            cur_yield = current_yield(trailing_open_income, current_value_eur)
 
         mwr = None
         cash_flows = []
@@ -325,15 +329,15 @@ class PerformanceService:
         cash_flows += [
             (event.payment_date, self._income_amount(event, income_basis)) for event in events
         ]
-        if position_native.quantity > 0 and current_value_eur is not None:
+        if position_eur.quantity > 0 and current_value_eur is not None:
             cash_flows.append((as_of, current_value_eur))
         try:
-            if len(cash_flows) >= 2:
+            if position_eur.quantity == 0 or current_value_eur is not None:
                 mwr = money_weighted_return(cash_flows)
         except ValueError:
             mwr = None  # Cash flows unsuitable for calculation (e.g. all have the same sign).
 
-        return PerformanceMetrics(
+        metrics = PerformanceMetrics(
             security_id=security.id,
             ticker=security.ticker,
             simple_return=simple_ret,
@@ -347,6 +351,7 @@ class PerformanceService:
                 income_basis=income_basis, cost_basis=cost_basis, portfolio=False
             ),
         )
+        return _SecurityPerformance(metrics, position_eur, open_distributions)
 
     def portfolio_valuations(
         self,
@@ -657,7 +662,9 @@ class PerformanceService:
             if income_events is not None
             else self.income_repo.list(date_to=period_end)
         )
-        all_events = [event for event in all_events if event.payment_date <= period_end]
+        all_events = _funded_events(
+            all_trades, [event for event in all_events if event.payment_date <= period_end]
+        )
         income_by_date: dict[dt.date, Decimal] = defaultdict(Decimal)
         for event in all_events:
             income_by_date[event.payment_date] += self._income_amount(event, income_basis)
@@ -890,7 +897,7 @@ class PerformanceService:
             cash_flows.append(
                 (t.date, -(amount + cost)) if t.type == "buy" else (t.date, amount - cost)
             )
-        for e in self.income_repo.list(date_to=as_of):
+        for e in _funded_events(trades, self.income_repo.list(date_to=as_of)):
             cash_flows.append((e.payment_date, self._income_amount(e, income_basis)))
         if include_costs:
             if recurring_costs is None:
@@ -948,6 +955,8 @@ class PerformanceService:
         metrics: list[PerformanceMetrics] = []
         total_invested = Decimal("0")
         total_current_value = Decimal("0")
+        open_distributions_less_costs = Decimal("0")
+        open_buy_dates: set[dt.date] = set()
         fallback_securities: list[PortfolioValuationFallback] = []
 
         for security in self.security_repo.list():
@@ -961,20 +970,20 @@ class PerformanceService:
                 if latest_price
                 else None
             )
-            metrics.append(
-                self._metrics(
-                    security,
-                    trades,
-                    events_by_security.get(security.id, []),
-                    current_price_eur,
-                    as_of=as_of,
-                    income_basis=income_basis,
-                    cost_basis=cost_basis,
-                    costs_by_trade=costs_by_trade,
-                )
+            result = self._metrics(
+                security,
+                trades,
+                events_by_security.get(security.id, []),
+                current_price_eur,
+                as_of=as_of,
+                income_basis=income_basis,
+                cost_basis=cost_basis,
+                costs_by_trade=costs_by_trade,
             )
-
-            position_eur = calculate_position_eur(trades)
+            metrics.append(result.metrics)
+            position_eur = result.position
+            open_distributions_less_costs += result.open_distributions_less_costs
+            open_buy_dates.update(lot.date for lot in position_eur.lots)
             total_invested += position_eur.total_invested
             quantity = position_eur.quantity
             if quantity > 0:
@@ -992,23 +1001,15 @@ class PerformanceService:
 
         total_income = sum((m.total_income_received for m in metrics), Decimal("0"))
         total_realized = sum((m.realized_gain_loss for m in metrics), Decimal("0"))
-        total_trade_costs = (
-            sum(costs_by_trade.values(), Decimal(0)) if include_costs else Decimal(0)
-        )
-        total_recurring_costs = (
-            sum((abs(Decimal(cost.amount_eur)) for cost in recurring_costs), Decimal(0))
-            if include_costs
-            else Decimal(0)
-        )
-
         aggregate_total_return = None
         if total_invested > 0:
             aggregate_total_return = total_return(
                 total_invested,
                 total_current_value,
-                net_dividends=total_income - total_trade_costs - total_recurring_costs,
+                net_dividends=open_distributions_less_costs,
             )
 
+        open_lot_days = (as_of - open_buy_dates.pop()).days if len(open_buy_dates) == 1 else None
         period_days = self.investment_period_days(as_of=as_of)
         twr = self.portfolio_twr(
             net_of_costs=include_costs,
@@ -1022,7 +1023,7 @@ class PerformanceService:
             total_invested=total_invested,
             total_current_value=total_current_value,
             total_return=aggregate_total_return,
-            total_return_annualized=self._annualized(aggregate_total_return, period_days),
+            total_return_annualized=self._annualized(aggregate_total_return, open_lot_days),
             time_weighted_return=twr,
             time_weighted_return_annualized=self._annualized(twr, period_days),
             money_weighted_return=self.portfolio_mwr(

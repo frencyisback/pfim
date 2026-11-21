@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — Financial reports and forecasts
+
+- Household savings and the period savings rate exclude the principal exchanged in trades and include fees, even for legacy charges with an unknown settlement account. The monthly CSV also includes economic income, spending, savings and the rate. The cash figures remain available alongside them.
+- Cash runway uses spending recorded during completed months. The report shows the number of contributing months out of twelve and spending in the partial month.
+- The return and distribution yield of remaining positions follow the units still held after partial sales or repurchases. A missing terminal quote leaves an open security's XIRR unavailable. Portfolio TWR and XIRR include repayments of principal as investment cash flows.
+- Coupon Analysis separates coupons and dividends from returned principal. The monthly average includes empty months, and the annual series includes years without receipts. Costs and Taxation reconciles repaid principal with changes in market value and checks both trade and recurring costs for actual stamp duty.
+- Automatic forecasts start from balances and investments on the saved base date. Forecasts validate the assumptions and identify savings milestones already reached on that date.
+- The dashboard shows unavailable amounts explicitly and requests six calendar months of cash flow. Portfolio keeps realised earnings visible after the last holding is sold.
+- Current and point-in-time portfolio summaries read the latest eligible price for each security. Net Worth history reads account movements in one query and reuses its price and trade histories across valuation dates. Query-count tests also verify the values returned for populated portfolios.
+- The Windows backend and frontend test scripts propagate the test runner's exit code.
+
 ### Changed — Net Worth composition by account
 
 - **Account balances** lists checking, savings and cash accounts;

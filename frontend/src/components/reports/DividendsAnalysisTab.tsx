@@ -121,6 +121,13 @@ export function DividendsAnalysisTab() {
         </p>
       )}
 
+      {data && Number(data.returned_capital_net) !== 0 && (
+        <p className="text-sm text-gray-600">
+          Principal repaid during the period: {formatEur(Number(data.returned_capital_net))} net.
+          The income figures below cover coupons and dividends.
+        </p>
+      )}
+
       {data && (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -131,7 +138,7 @@ export function DividendsAnalysisTab() {
               formula={
                 <>
                   <Formula>Σ (gross amount − withholding) × exchange rate</Formula>
-                  The amount actually credited to the account in the selected period.
+                  Net coupon and dividend payments in the selected period.
                 </>
               }
             />
@@ -169,8 +176,8 @@ export function DividendsAnalysisTab() {
               }
               formula={
                 <>
-                  <Formula>Receipts over the last 12 months ÷ Acquisition cost</Formula>
-                  Coupon yield on capital <em>actually invested</em>, rather than current market value. If the security has risen sharply, the yield stays high because it depends on the price you paid.
+                  <Formula>Net income earned by remaining units over 365 days ÷ their FIFO cost</Formula>
+                  A partial sale reduces both the income attributed to the holding and its remaining cost.
                 </>
               }
             />
@@ -185,7 +192,10 @@ export function DividendsAnalysisTab() {
             {data.average_monthly_net !== null && (
               <> — averaging {formatEur(Number(data.average_monthly_net))} per month</>
             )}
-            . The <strong>yield on cost</strong> compares receipts over the last 12 months with the acquisition cost of positions open today. The securities table uses income for the selected period. This measures coupon yield on capital actually invested rather than current market value.
+            . The monthly average counts each calendar month in the filter, including partial months
+            and months with no receipts. An open start uses the first payment and an open end includes
+            today or the last recorded payment, whichever is later. Yield uses the portion earned by
+            units still held. Annual changes compare adjacent calendar years within the filter.
           </p>
 
           <div className="rounded-lg border border-gray-200 bg-white p-4">

@@ -58,6 +58,14 @@ class NetWorthAccountComposition(BaseModel):
     issues: list[NetWorthAllocationIssue]
 
 
+class SpendingCoverage(BaseModel):
+    window_from: dt.date
+    window_to: dt.date
+    months_with_recorded_expenses: int
+    # None on a month-end snapshot. Otherwise this is excluded from the monthly baseline.
+    partial_month_spending: Decimal | None
+
+
 class NetWorthReport(BaseModel):
     as_of_date: dt.date
     total_accounts_balance: Decimal
@@ -69,6 +77,7 @@ class NetWorthReport(BaseModel):
     liquid_balance: Decimal = Decimal("0")
     average_monthly_expenses: Decimal | None = None
     runway_months: Decimal | None = None
+    spending_coverage: SpendingCoverage
     portfolio_valuation: PortfolioValuationMetadata = Field(
         default_factory=PortfolioValuationMetadata
     )
@@ -80,6 +89,10 @@ class IncomeStatementPeriod(BaseModel):
     total_expense: Decimal
     net: Decimal
     savings_rate_pct: Decimal | None
+    economic_income: Decimal
+    economic_spending: Decimal
+    economic_savings: Decimal
+    economic_savings_rate_pct: Decimal | None
 
 
 class IncomeStatementReport(BaseModel):
@@ -93,6 +106,10 @@ class IncomeStatementReport(BaseModel):
     # spending. Exclude months without a rate from the sample.
     average_savings_rate_pct: Decimal | None = None
     savings_rate_months: int = 0
+    economic_income: Decimal
+    economic_spending: Decimal
+    economic_savings: Decimal
+    economic_savings_rate_pct: Decimal | None
 
 
 class CategoryAnalysisItem(BaseModel):
@@ -227,7 +244,7 @@ class DividendYearPoint(BaseModel):
 
 
 class DividendMonthPoint(BaseModel):
-    """Seasonality: average receipts for each calendar month across the years in the period."""
+    """Seasonality: total receipts for each calendar month across the years in the period."""
 
     month: int
     net: Decimal
@@ -264,6 +281,7 @@ class DividendsAnalysisReport(BaseModel):
     total_gross: Decimal
     total_net: Decimal
     total_tax: Decimal
+    returned_capital_net: Decimal
     tax_incidence_pct: Decimal | None
     events_count: int
     first_event_date: dt.date | None
@@ -306,6 +324,7 @@ class RealizedResult(BaseModel):
     capital_losses: Decimal
     net_realized: Decimal
     income_gross: Decimal
+    returned_capital_gross: Decimal
     gross_result: Decimal
 
 
@@ -330,6 +349,8 @@ class FiscalPosition(BaseModel):
     estimated_tax_due: Decimal
     # Coupon and dividend withholdings, always actual amounts.
     dividend_withholding: Decimal
+    # Recorded withholding on returned principal, in EUR.
+    principal_withholding: Decimal
 
 
 class CostImpact(BaseModel):

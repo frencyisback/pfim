@@ -30,14 +30,14 @@ account to a cash account, then add your transactions and investment activity.
 
 | Page | What to enter | What you will find |
 |---|---|---|
-| **Dashboard** | Automatically uses your recorded data. | Net worth, account balances, portfolio value and summary charts. |
+| **Dashboard** | Automatically uses your recorded data. | Recorded financial wealth, account balances, portfolio value and six calendar months of cash flow. |
 | **Cashflow** | Income/expenses with date, account, category, amount and description; CSV imports and transfers. | Your transaction history, filtered by account, category or period. |
 | **Portfolio** | Automatically uses your trades and prices. | Current holdings, invested capital, valuations and realised/unrealised gains or losses. |
 | **Securities** | Security details, trades (date, account, quantity, price and fees), prices and recurring costs. | Your security catalogue, latest quotes and trading/cost history. |
 | **Security detail** | Select any security from the catalogue, including inactive securities. | Its current record and a line connecting recorded EUR prices through today, with a point on each observation date. |
-| **Income** | Coupons, dividends or capital repayments: security, account, payment date, gross amount and tax withheld. | Recorded investment income and net amounts received. |
+| **Income** | Coupons, dividends or capital repayments: security, account, payment date, gross amount and tax withheld. | Net cash received by event, including principal repayments. |
 | **Reports** | Select a period; add or manage tax entries when needed. | Net worth, returns, income/spending breakdowns, costs, taxes, CSV exports and backup/restore tools. |
-| **Forecasts** | Starting capital, time horizon, monthly income/expenses and growth/return assumptions. | Net worth projections and comparisons of saved scenarios. |
+| **Forecasts** | Base date, starting capital, time horizon, monthly income/expenses and growth/return assumptions. | Projections starting from the recorded balances and holdings on the base date or from a manual amount. |
 | **Settings** | Accounts with opening dates/balances, categories, tax rates, exchange rates and CSV mappings. | The configuration used by entry forms, imports and calculations. |
 
 In **Reports → Net Worth**, **Account balances** lists checking, savings and
@@ -46,6 +46,18 @@ value of its holdings, including empty accounts at zero. Accounts without
 quotes carry an explicit cost-estimate label; inconsistent historical
 allocations are identified separately.
 [Valuation rules](docs/finance-calculations.md#42-net-worth-composition-by-account)
+
+**Household savings** measures economic income less spending. For example,
+earning €2,000, spending €1,000 and investing €1,000 leaves €1,000 saved
+and zero cash surplus. **Cash runway** shows how many months of recorded
+spending the checking balance covers and how many completed months were
+available to estimate spending.
+[Savings](docs/finance-calculations.md#economic-household-savings) · [Cash runway](docs/finance-calculations.md#8-robust-average-monthly-expenses-and-cash-runway)
+
+In **Coupon Analysis**, the monthly average includes months with zero income.
+The report lists returned principal separately. Yields on current holdings
+use the share of coupons and dividends attributable to the units still held.
+[Distribution yields](docs/finance-calculations.md#3-distribution-yield--financeincomepy)
 
 In **Reports → Costs and Taxation**, **Gross result** includes the period's
 change in unrealised gains and losses. **Net realised result** shows realised

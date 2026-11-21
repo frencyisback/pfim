@@ -245,14 +245,10 @@ class TestReportScopes:
         ).json()
         analysis = client.get("/api/v1/reports/spending-analysis").json()
 
-        # The average is winsorized over 12 months (eleven zero months here),
-        # so the sole nonzero month's peak is capped at P95. Both views
-        # must still start from the same economic expense of 320 euros.
         assert net_worth["average_monthly_expenses"] is not None
         monthly_spend = abs(Decimal(analysis["total_amount"]))
-        # With 11 zeros and one peak, P95 = 45% of the peak; all 12 months remain.
-        expected = monthly_spend * Decimal("0.45") / 12
-        assert Decimal(net_worth["average_monthly_expenses"]) == expected
+        assert Decimal(net_worth["average_monthly_expenses"]) == monthly_spend
+        assert net_worth["spending_coverage"]["months_with_recorded_expenses"] == 1
 
     def test_cash_balance_still_counts_everything(self, client, scenario):
         """The account BALANCE remains a cash view: purchases and transfers must appear there to reconcile with the bank statement."""
