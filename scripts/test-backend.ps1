@@ -4,7 +4,11 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
 Push-Location "$root\backend"
-& ".\venv\Scripts\Activate.ps1"
-pytest
-Pop-Location
+try {
+    & ".\venv\Scripts\python.exe" -m pytest
+    $testExit = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+exit $testExit
 

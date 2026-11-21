@@ -162,6 +162,19 @@ def test_monthly_savings_override_used_instead_of_auto():
     assert year1.cash_balance == Decimal("5000") + (Decimal("12000") - invested)
 
 
+def test_milestones_at_opening_survive_a_first_year_decline():
+    params = _base_params(
+        starting_cash_balance=Decimal("100000"),
+        starting_portfolio_value=Decimal("10000"),
+        monthly_income=Decimal(0),
+        monthly_expenses=Decimal("2000"),
+        milestones=[Decimal("100000"), Decimal("110000"), Decimal("200000")],
+    )
+    for projection in run_forecast_scenario(params).scenarios.values():
+        assert projection.years[0].net_worth < 100000
+        assert projection.milestones_reached == {"100000": 0, "110000": 0}
+
+
 def test_milestones_detected_at_correct_year():
     params = _base_params(
         horizon_years=10,

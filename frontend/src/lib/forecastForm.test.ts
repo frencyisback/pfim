@@ -3,6 +3,7 @@ import { validateForecastForm, type ForecastForm } from "./forecastForm";
 
 const validForm: ForecastForm = {
   name: "Example scenario",
+  base_date: "2020-01-01",
   horizon_years: "15",
   startingNetWorthMode: "auto",
   startingNetWorthValue: "",
@@ -16,6 +17,25 @@ const validForm: ForecastForm = {
 };
 
 describe("forecast scenario creation", () => {
+  it("accepts future dates only with explicit opening cash and a representable final year", () => {
+    const future = { ...validForm, base_date: "2030-01-01" };
+    expect(validateForecastForm(future, "2029-12-31")).toMatch(/future/i);
+    const custom = { ...future, startingNetWorthMode: "custom" as const, startingNetWorthValue: "0" };
+    expect(validateForecastForm(custom, "2029-12-31")).toBeNull();
+    expect(validateForecastForm({ ...custom, base_date: "9999-01-01" })).toMatch(/anniversary/i);
+  });
+
+  it("keeps inflows and outflows unsigned and orders the three return assumptions", () => {
+    for (const field of ["monthly_income", "monthly_expenses"]) {
+      expect(validateForecastForm({ ...validForm, [field]: "-1" })).toMatch(/positive/i);
+    }
+    for (const field of ["income_growth_rate_annual", "expense_growth_rate_annual", "return_pessimistic"]) {
+      expect(validateForecastForm({ ...validForm, [field]: "-101" })).toMatch(/-100%/);
+    }
+    expect(validateForecastForm({ ...validForm, return_pessimistic: "6" })).toMatch(/between/i);
+    expect(validateForecastForm({ ...validForm, return_optimistic: "4" })).toMatch(/between/i);
+  });
+
   it("requires every parameter without converting empty fields to zero", () => {
     expect(validateForecastForm(validForm)).toBeNull();
     for (const field of [

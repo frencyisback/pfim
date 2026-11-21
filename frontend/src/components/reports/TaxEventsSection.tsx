@@ -101,6 +101,7 @@ export function TaxEventsSection({ range }: { range: DateRange }) {
 
       <p className="max-w-3xl text-xs text-gray-500">
         Capital gains and losses from sales appear here <strong>automatically</strong>. Manually add only information unavailable to the system: external withholding, prior losses and separately paid taxes.
+        The estimated amount still payable deducts tax recorded as a cost on a sale. A separate payment entered here is a register entry only.
         <br />
         Estimates based on tax rates do not replace tax documents: consult a professional before filing.
       </p>

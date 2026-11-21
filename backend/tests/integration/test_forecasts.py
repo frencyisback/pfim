@@ -1,5 +1,6 @@
 """Integration tests: forecast scenarios (specification §6.9, §10)."""
 
+import datetime as dt
 import json
 from decimal import Decimal
 
@@ -47,7 +48,13 @@ def test_create_and_get_scenario(client):
 
 def test_run_scenario_with_auto_starting_net_worth(client):
     client.post(
-        "/api/v1/accounts", json={"name": "Account", "type": "checking", "opening_balance": 5000}
+        "/api/v1/accounts",
+        json={
+            "name": "Account",
+            "type": "checking",
+            "opening_balance": 5000,
+            "opened_on": "2026-01-01",
+        },
     )
     scenario = client.post("/api/v1/forecasts/scenarios", json=_scenario_payload()).json()
 
@@ -126,7 +133,7 @@ def test_finite_starting_amounts_remain_cash_and_do_not_read_live_values(
         pytest.fail("An explicit amount must not resolve automatic net worth")
 
     monkeypatch.setattr(
-        "app.services.account_service.AccountService.list_accounts", unexpected_auto_resolution
+        "app.services.account_service.AccountService.balances_as_of", unexpected_auto_resolution
     )
     payload = _scenario_payload()
     payload["parameters"]["starting_net_worth"] = starting
@@ -234,3 +241,97 @@ def test_api_contributions_use_anniversary_periods(client):
     for projection in result.json()["scenarios"].values():
         assert projection["years"][0]["date"] == "2027-06-01"
         assert Decimal(projection["years"][0]["net_worth"]) == 12080
+
+
+def test_auto_uses_historical_cash_trades_and_quotes_at_the_same_cutoff(client):
+    base = dt.date.today() - dt.timedelta(days=10)
+    later = (base + dt.timedelta(days=1)).isoformat()
+
+    def create(path, **payload):
+        response = client.post(f"/api/v1/{path}", json=payload)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    cash = create(
+        "accounts", name="Cash", type="checking", opening_balance=1000, opened_on=base.isoformat()
+    )
+    broker = create(
+        "accounts",
+        name="Broker",
+        type="investment",
+        reference_account_id=cash["id"],
+        opened_on=base.isoformat(),
+    )
+    security = create(
+        "securities", ticker="FORE", name="Forecast test", type="stock", currency="EUR"
+    )
+    trade = dict(
+        type="buy", security_id=security["id"], account_id=broker["id"], quantity=1, currency="EUR"
+    )
+    create("trades", **trade, date=base.isoformat(), price=100)
+    create("prices", security_id=security["id"], date=base.isoformat(), price_close=150)
+    params = _scenario_payload(base_date=base.isoformat())
+    params["parameters"]["cash_flow"].update(monthly_income=0, monthly_expenses=0)
+    scenario = create("forecasts/scenarios", **params)
+    endpoint = f"/api/v1/forecasts/run/{scenario['id']}"
+    before = client.post(endpoint).json()
+    first = before["scenarios"]["base"]["years"][0]
+    assert Decimal(first["cash_balance"]) == 900
+    assert Decimal(first["portfolio_value"]) == Decimal("160.5")
+
+    create(
+        "accounts", name="Later account", type="checking", opening_balance=10000, opened_on=later
+    )
+    create("trades", **trade, date=later, price=200)
+    create("prices", security_id=security["id"], date=later, price_close=900)
+    assert client.post(endpoint).json() == before
+
+
+@pytest.mark.parametrize(
+    "section,field,value",
+    [
+        ("cash_flow", "monthly_income", -1),
+        ("cash_flow", "monthly_expenses", -1000),
+        ("cash_flow", "income_growth_rate_annual", -1.01),
+        ("cash_flow", "expense_growth_rate_annual", -1.01),
+        ("portfolio", "return_pessimistic", -1.01),
+        ("portfolio", "return_pessimistic", 0.08),
+        ("portfolio", "return_optimistic", 0.06),
+    ],
+)
+def test_invalid_signs_and_assumptions_rejected_and_legacy_preserved(client, section, field, value):
+    payload = _scenario_payload()
+    good = client.post("/api/v1/forecasts/scenarios", json=payload).json()
+    payload["parameters"][section][field] = value
+    assert client.post("/api/v1/forecasts/scenarios", json=payload).status_code == 422
+    _replace_saved_parameters(good["id"], payload["parameters"])
+    run = client.post(f"/api/v1/forecasts/run/{good['id']}")
+    assert run.status_code == 400
+    assert any(section in path for path in run.json()["detail"]["fields"])
+    assert (
+        client.get(f"/api/v1/forecasts/scenarios/{good['id']}").json()["parameters"]
+        == payload["parameters"]
+    )
+
+
+def test_future_base_requires_manual_cash_including_saved_scenarios(client):
+    future = (dt.date.today() + dt.timedelta(days=10)).isoformat()
+    payload = _scenario_payload(base_date=future)
+    assert client.post("/api/v1/forecasts/scenarios", json=payload).status_code == 422
+    payload["parameters"]["starting_net_worth"] = -100
+    scenario = client.post("/api/v1/forecasts/scenarios", json=payload).json()
+    result = client.post(f"/api/v1/forecasts/run/{scenario['id']}")
+    assert result.status_code == 200
+    assert Decimal(result.json()["scenarios"]["base"]["years"][0]["cash_balance"]) == -100
+
+    payload["parameters"]["starting_net_worth"] = "auto"
+    _replace_saved_parameters(scenario["id"], payload["parameters"])
+    run = client.post(f"/api/v1/forecasts/run/{scenario['id']}")
+    assert run.status_code == 400
+    assert run.json()["detail"] == {"scenario_id": scenario["id"], "fields": ["base_date"]}
+    assert (
+        client.get(f"/api/v1/forecasts/scenarios/{scenario['id']}").json()["parameters"][
+            "starting_net_worth"
+        ]
+        == "auto"
+    )

@@ -1,5 +1,7 @@
 """Integration tests: coupon and dividend analysis (specification §7.5.1)."""
 
+from decimal import Decimal
+
 
 def _make_accounts(client) -> int:
     """Return the investment account ID (with its reference account)."""
@@ -161,3 +163,111 @@ def test_dividends_analysis_is_empty_without_events(client):
     assert body["tax_incidence_pct"] is None
     # seasonality keeps 12 empty months so the chart remains valid
     assert len(body["by_month"]) == 12
+
+
+def test_calendar_month_average_year_gaps_and_returned_capital(client):
+    account = _make_accounts(client)
+    security = _make_security(client, "CAL")
+    for day, amount, kind in (
+        ("2022-04-05", 100, "dividend"),
+        ("2023-02-10", 30, "return_of_capital"),
+        ("2024-06-15", 120, "coupon"),
+    ):
+        assert _income(client, security, account, day, amount, event_type=kind).status_code == 201
+
+    endpoint = "/api/v1/reports/dividends-analysis"
+    year = client.get(endpoint, params={"date_from": "2024-01-01", "date_to": "2024-12-31"}).json()
+    assert Decimal(year["average_monthly_net"]) == 10
+    params = {"date_from": "2022-01-01", "date_to": "2024-12-31"}
+    body = client.get(endpoint, params=params).json()
+    assert Decimal(body["total_net"]) == 220
+    assert Decimal(body["returned_capital_net"]) == 30
+    assert body["events_count"] == 2
+    assert [row["year"] for row in body["by_year"]] == [2022, 2023, 2024]
+    assert Decimal(body["by_year"][1]["growth_pct"]) == -100
+    assert body["by_year"][2]["growth_pct"] is None
+    costs = client.get("/api/v1/reports/costs-analysis", params=params).json()
+    assert Decimal(costs["realized"]["income_gross"]) == 220
+    assert Decimal(costs["realized"]["returned_capital_gross"]) == 30
+    assert Decimal(costs["realized"]["gross_result"]) == 220
+
+
+def test_partial_sale_reconciles_cash_income_and_remaining_position_yield(client):
+    account = _make_accounts(client)
+    security = _make_security(client, "PART")
+    trade = {"security_id": security, "account_id": account, "price": 10, "currency": "EUR"}
+    assert (
+        client.post(
+            "/api/v1/trades", json={**trade, "type": "buy", "date": "2022-01-01", "quantity": 100}
+        ).status_code
+        == 201
+    )
+    assert _income(client, security, account, "2022-02-01", 50).status_code == 201
+    assert (
+        client.post(
+            "/api/v1/trades", json={**trade, "type": "sell", "date": "2022-03-01", "quantity": 90}
+        ).status_code
+        == 201
+    )
+    body = client.get("/api/v1/reports/dividends-analysis").json()
+    assert Decimal(body["total_net"]) == 50
+    assert Decimal(body["by_security"][0]["yield_on_cost_pct"]) == 5
+
+
+def test_principal_repayment_reconciles_with_price_drop(client):
+    account = _make_accounts(client)
+    security = _make_security(client, "REPAY")
+    trade = {
+        "security_id": security,
+        "account_id": account,
+        "type": "buy",
+        "date": "2023-01-01",
+        "quantity": 1,
+        "price": 100,
+        "currency": "EUR",
+    }
+    assert client.post("/api/v1/trades", json=trade).status_code == 201
+    assert (
+        _income(
+            client, security, account, "2023-03-01", 10, event_type="return_of_capital"
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/api/v1/prices",
+            json={"security_id": security, "date": "2023-03-01", "price_close": 90},
+        ).status_code
+        == 201
+    )
+    result = client.get(
+        "/api/v1/reports/costs-analysis?date_from=2023-03-01&date_to=2023-03-31"
+    ).json()
+    assert Decimal(result["realized"]["income_gross"]) == 0
+    assert Decimal(result["unrealized_tax"]["unrealized_change_eur"]) == -10
+    assert Decimal(result["unrealized_tax"]["economic_gross_result_eur"]) == 0
+
+
+def test_fiscal_summary_splits_principal_and_income_withholding_and_reconciles_costs(client):
+    account = _make_accounts(client)
+    security = _make_security(client, "TAXSPLIT")
+    for kind, day, gross, tax in (
+        ("dividend", "2023-03-10", 14, 2),
+        ("coupon", "2023-03-15", 12, 1),
+        ("return_of_capital", "2023-03-20", 25, 5),
+        ("return_of_capital", "2023-04-01", 20, 4),
+    ):
+        assert _income(client, security, account, day, gross, tax, kind).status_code == 201
+
+    period = {"date_from": "2023-03-01", "date_to": "2023-03-31"}
+    result = client.get("/api/v1/reports/costs-analysis", params=period).json()
+    fiscal = result["fiscal"]
+    assert Decimal(fiscal["dividend_withholding"]) == 3
+    assert Decimal(fiscal["principal_withholding"]) == 5
+    assert Decimal(fiscal["tax_already_withheld"]) == 0  # Withholding on sales only.
+    assert Decimal(result["total_costs"]) == 8
+    taxes = next(group for group in result["groups"] if group["group"] == "taxes")
+    assert Decimal(taxes["total_eur"]) == 8
+    income = client.get("/api/v1/reports/dividends-analysis", params=period).json()
+    assert Decimal(income["total_tax"]) == Decimal(fiscal["dividend_withholding"])
+    assert Decimal(income["returned_capital_net"]) == 20

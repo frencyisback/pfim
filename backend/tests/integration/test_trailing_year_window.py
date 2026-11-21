@@ -10,6 +10,7 @@ These tests compare both numbers directly to expose the discrepancy.
 """
 
 import datetime as dt
+from decimal import Decimal
 
 from app.finance.periods import DAYS_PER_YEAR
 
@@ -70,7 +71,7 @@ def _both_views(client, security_id: int) -> tuple[bool, bool]:
     performance = client.get(f"/api/v1/performance/{security_id}").json()
     dividends = client.get("/api/v1/reports/dividends-analysis").json()
     return (
-        performance["yield_on_cost"] is not None,
+        Decimal(performance["yield_on_cost"]) > 0,
         float(dividends["trailing_12m_net"]) > 0,
     )
 

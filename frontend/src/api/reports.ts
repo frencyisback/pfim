@@ -38,11 +38,24 @@ export interface NetWorthReport {
   liquid_balance: string;
   average_monthly_expenses: string | null;
   runway_months: string | null;
+  spending_coverage: {
+    window_from: string;
+    window_to: string;
+    months_with_recorded_expenses: number;
+    partial_month_spending: string | null;
+  };
   /** Distinguishes market quotes from FIFO cost estimates. */
   portfolio_valuation: PortfolioValuationMetadata;
 }
 
-export interface IncomeStatementPeriod {
+interface EconomicSavings {
+  economic_income: string;
+  economic_spending: string;
+  economic_savings: string;
+  economic_savings_rate_pct: string | null;
+}
+
+export interface IncomeStatementPeriod extends EconomicSavings {
   period_label: string;
   total_income: string;
   total_expense: string;
@@ -50,7 +63,7 @@ export interface IncomeStatementPeriod {
   savings_rate_pct: string | null;
 }
 
-export interface IncomeStatementReport {
+export interface IncomeStatementReport extends EconomicSavings {
   periods: IncomeStatementPeriod[];
   total_income: string;
   total_expense: string;
@@ -197,6 +210,7 @@ export interface DividendsAnalysisReport {
   total_gross: string;
   total_net: string;
   total_tax: string;
+  returned_capital_net: string;
   tax_incidence_pct: string | null;
   events_count: number;
   first_event_date: string | null;
@@ -233,6 +247,7 @@ export interface RealizedResult {
   capital_losses: string;
   net_realized: string;
   income_gross: string;
+  returned_capital_gross: string;
   gross_result: string;
 }
 
@@ -269,6 +284,7 @@ export interface FiscalPosition {
   /** Estimated remaining tax payable. Never negative. */
   estimated_tax_due: string;
   dividend_withholding: string;
+  principal_withholding: string;
 }
 
 export interface UnrealizedTaxSnapshot {

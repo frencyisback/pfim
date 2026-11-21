@@ -136,7 +136,7 @@ export default function IncomeEvents() {
 
       {summary && (
         <div className="rounded-lg border border-gray-200 bg-white p-3">
-          <div className="text-xs text-gray-500">Total net received</div>
+          <div className="text-xs text-gray-500">Net cash received, including principal repayments</div>
           <div className="mt-1 text-lg font-semibold text-green-600">
             {formatEur(Number(summary.total_net_eur))}
           </div>

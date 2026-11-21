@@ -9,6 +9,21 @@ from sqlalchemy import event
 from .conftest import engine
 
 
+def test_recorded_stamp_duty_on_trade_suppresses_current_year_estimate(client):
+    investment, security = _portfolio(client)
+    today = dt.date.today()
+    trade = _buy(client, investment, security, date=today)
+    charge = client.post(
+        f"/api/v1/trades/{trade['id']}/costs",
+        json={"cost_type": "stamp_duty", "amount": "2", "currency": "EUR"},
+    )
+    assert charge.status_code == 201, charge.text
+    report = client.get("/api/v1/reports/costs-analysis").json()
+    assert report["current_stamp_duty_estimate"] is None
+    taxes = next(group for group in report["groups"] if group["group"] == "taxes")
+    assert Decimal(taxes["total_eur"]) == 2
+
+
 def _portfolio(client, *, ticker: str = "PERIOD") -> tuple[int, int]:
     cash = client.post(
         "/api/v1/accounts",
