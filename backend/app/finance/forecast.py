@@ -70,8 +70,9 @@ def _simulate_scenario(
     current_monthly_expenses = monthly_expenses
 
     years: list[YearProjection] = []
-    milestones_reached: dict[str, int] = {}
-    milestones_pending = sorted(milestones)
+    opening_net_worth = starting_cash_balance + starting_portfolio_value
+    milestones_reached = {str(target): 0 for target in milestones if target <= opening_net_worth}
+    milestones_pending = sorted(target for target in milestones if target > opening_net_worth)
     previous_date = base_date
 
     for year_index in range(1, horizon_years + 1):

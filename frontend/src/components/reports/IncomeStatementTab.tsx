@@ -16,13 +16,13 @@ import KpiCard, { Formula } from "@/components/common/KpiCard";
 import QueryStateNotice from "@/components/common/QueryStateNotice";
 import SortableHeader from "@/components/common/SortableHeader";
 import { DateRangeFilter } from "@/components/reports/DateRangeFilter";
-import { formatEur } from "@/lib/formatters";
+import { formatEur, formatPercent } from "@/lib/formatters";
 import { useTableSort } from "@/lib/useTableSort";
 
 export function IncomeStatementTab() {
   const [range, setRange] = useState<DateRange>({});
   const { data, isLoading, error } = useIncomeStatement(range);
-  type PeriodSortKey = "period" | "income" | "expense" | "net" | "savings";
+  type PeriodSortKey = "period" | "income" | "expense" | "net" | "cashRate" | "savings" | "economicRate";
   const periodSort = useTableSort(
     data?.periods ?? [],
     { key: "period" as PeriodSortKey, direction: "asc" },
@@ -31,6 +31,8 @@ export function IncomeStatementTab() {
       if (key === "income") return Number(period.total_income);
       if (key === "expense") return Number(period.total_expense);
       if (key === "net") return Number(period.net);
+      if (key === "savings") return Number(period.economic_savings);
+      if (key === "economicRate") return period.economic_savings_rate_pct === null ? null : Number(period.economic_savings_rate_pct);
       return period.savings_rate_pct === null ? null : Number(period.savings_rate_pct);
     }
   );
@@ -46,7 +48,7 @@ export function IncomeStatementTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="max-w-3xl text-xs text-gray-500">
-          Cash inflows and outflows include security sales, purchases, coupons and costs. Transfers between your own accounts are excluded. Trades affect the balance and savings rate for the period.
+          Cash inflows and outflows include security purchases and sales. Economic savings measure income left after spending, including recorded investment costs. Trade principal, principal repayments and internal transfers are excluded from household income.
         </p>
         <div className="flex flex-wrap items-start gap-2">
           <DateRangeFilter range={range} onChange={setRange} />
@@ -84,7 +86,7 @@ export function IncomeStatementTab() {
               }
             />
             <KpiCard
-              label="Net balance"
+              label="Net cash flow"
               value={formatEur(Number(data.net))}
               positive={Number(data.net) >= 0}
               formula={
@@ -93,6 +95,19 @@ export function IncomeStatementTab() {
                   Outflows are already negative, so they are added.
                 </>
               }
+            />
+            <KpiCard label="Economic income" value={formatEur(Number(data.economic_income))} />
+            <KpiCard label="Economic spending" value={formatEur(Number(data.economic_spending))} />
+            <KpiCard
+              label="Economic savings"
+              value={formatEur(Number(data.economic_savings))}
+              positive={Number(data.economic_savings) >= 0}
+              formula={<Formula>Economic income − economic spending</Formula>}
+            />
+            <KpiCard
+              label="Economic savings rate"
+              value={data.economic_savings_rate_pct === null ? "—" : formatPercent(Number(data.economic_savings_rate_pct) / 100)}
+              formula={<><Formula>Period economic savings ÷ period economic income × 100</Formula>Expenses from months without income count towards the period total.</>}
             />
           </div>
 
@@ -117,7 +132,7 @@ export function IncomeStatementTab() {
           </div>
 
           <CollapsibleTable title="Monthly detail" count={data.periods.length}>
-            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
               <table className="w-full text-sm">
               <thead className="bg-gray-50 text-left text-gray-500">
                 <tr>
@@ -125,8 +140,10 @@ export function IncomeStatementTab() {
                     ["period", "Month", "left"],
                     ["income", "Inflows", "right"],
                     ["expense", "Outflows", "right"],
-                    ["net", "Net", "right"],
-                    ["savings", "Savings %", "right"],
+                    ["net", "Net cash flow", "right"],
+                    ["cashRate", "Cash surplus %", "right"],
+                    ["savings", "Economic savings", "right"],
+                    ["economicRate", "Economic savings %", "right"],
                   ] as const).map(([key, label, align]) => (
                     <SortableHeader
                       key={key}
@@ -149,7 +166,11 @@ export function IncomeStatementTab() {
                     <td className="px-3 py-2 text-right text-red-600">{formatEur(Number(p.total_expense))}</td>
                     <td className="px-3 py-2 text-right font-medium">{formatEur(Number(p.net))}</td>
                     <td className="px-3 py-2 text-right">
-                      {p.savings_rate_pct ? `${Number(p.savings_rate_pct).toFixed(1)}%` : "—"}
+                      {p.savings_rate_pct === null ? "—" : formatPercent(Number(p.savings_rate_pct) / 100)}
+                    </td>
+                    <td className="px-3 py-2 text-right">{formatEur(Number(p.economic_savings))}</td>
+                    <td className="px-3 py-2 text-right">
+                      {p.economic_savings_rate_pct === null ? "—" : formatPercent(Number(p.economic_savings_rate_pct) / 100)}
                     </td>
                   </tr>
                 ))}

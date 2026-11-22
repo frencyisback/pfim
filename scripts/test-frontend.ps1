@@ -4,6 +4,11 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
 Push-Location "$root\frontend"
-npm test
-Pop-Location
+try {
+    npm test
+    $testExit = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+exit $testExit
 

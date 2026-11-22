@@ -541,6 +541,27 @@ class AccountService:
             )
         self.repo.delete(account_id)
 
+    def balances_as_of(
+        self, as_of_date: dt.date, *, accounts: list[Account] | None = None
+    ) -> dict[int, Decimal]:
+        """Balances for accounts present at the cutoff, including closed and legacy accounts."""
+        if accounts is None:
+            accounts = self.list_accounts(only_active=False)
+        balances = {
+            account.id: Decimal(account.opening_balance)
+            for account in accounts
+            if account_is_present_on(account, as_of_date)
+        }
+        movements = self.db.execute(
+            select(Transaction.account_id, Transaction.amount_eur).where(
+                Transaction.date <= as_of_date
+            )
+        )
+        for account_id, amount in movements:
+            if account_id in balances:
+                balances[account_id] += Decimal(amount)
+        return balances
+
     def get_balance(self, account_id: int, as_of_date: dt.date | None = None) -> AccountBalance:
         account = self.get_account(account_id)
         as_of_date = as_of_date or dt.date.today()
@@ -572,67 +593,46 @@ class AccountService:
         )
 
     def get_balance_history(self, account_id: int) -> list[AccountBalanceHistoryPoint]:
-        """Balance history: one point per date containing a movement, starting from the opening
-        balance. When known, the opening date starts the series; legacy records without one
-        retain their previous behavior. End at the closing date inclusive and never expose
-        points outside the account lifecycle.
-        """
         account = self.get_account(account_id)
+        return self.balance_histories([account], through=dt.date.today())[account_id]
 
-        today = dt.date.today()
-        end_date = min(today, account.closed_on) if account.closed_on else today
-        if account.opened_on is not None and account.opened_on > end_date:
-            return []
-        stmt = (
-            select(Transaction)
-            .where(
-                Transaction.account_id == account_id,
-                Transaction.date <= end_date,
-            )
-            .order_by(Transaction.date)
+    def balance_histories(
+        self, accounts: list[Account], *, through: dt.date
+    ) -> dict[int, list[AccountBalanceHistoryPoint]]:
+        """Build daily histories for the report's account set or one requested account."""
+        histories: dict[int, list[AccountBalanceHistoryPoint]] = {a.id: [] for a in accounts}
+        eligible = {
+            a.id: a
+            for a in accounts
+            if a.opened_on is None or a.opened_on <= min(through, a.closed_on or through)
+        }
+        if not eligible:
+            return histories
+
+        stmt = select(Transaction.account_id, Transaction.date, Transaction.amount_eur).where(
+            Transaction.date <= through
         )
-        transactions = list(self.db.scalars(stmt))
+        if len(eligible) == 1:
+            stmt = stmt.where(Transaction.account_id == next(iter(eligible)))
+        daily: dict[int, dict[dt.date, Decimal]] = {account_id: {} for account_id in eligible}
+        for account_id, day, amount in self.db.execute(stmt).yield_per(2000):
+            account = eligible.get(account_id)
+            if account is None or (account.closed_on is not None and day > account.closed_on):
+                continue
+            # Older movements on migrated accounts contribute to the opening point.
+            point_date = max(day, account.opened_on) if account.opened_on else day
+            amounts = daily[account_id]
+            amounts[point_date] = amounts.get(point_date, Decimal(0)) + Decimal(amount)
 
-        if account.opened_on is None:
-            if not transactions:
-                return [
-                    AccountBalanceHistoryPoint(
-                        date=end_date,
-                        balance=Decimal(account.opening_balance),
-                    )
-                ]
-
-            by_date: dict[dt.date, Decimal] = {}
-            for transaction in transactions:
-                by_date[transaction.date] = by_date.get(transaction.date, Decimal("0")) + Decimal(
-                    transaction.amount_eur
-                )
-
-            running_balance = Decimal(account.opening_balance)
-            points: list[AccountBalanceHistoryPoint] = []
-            for date in sorted(by_date):
-                running_balance += by_date[date]
-                points.append(AccountBalanceHistoryPoint(date=date, balance=running_balance))
-            return points
-
-        # For an account with a known opening date, consolidate earlier transactions imported
-        # before lifecycle support into the first point at opening. Never show them before that
-        # date; leave the current balance unchanged.
-        #
-        by_date: dict[dt.date, Decimal] = {}
-        carried_balance = Decimal(account.opening_balance)
-        for transaction in transactions:
-            if transaction.date < account.opened_on:
-                carried_balance += Decimal(transaction.amount_eur)
-            else:
-                by_date[transaction.date] = by_date.get(transaction.date, Decimal("0")) + Decimal(
-                    transaction.amount_eur
-                )
-
-        running_balance = carried_balance + by_date.pop(account.opened_on, Decimal("0"))
-        points = [AccountBalanceHistoryPoint(date=account.opened_on, balance=running_balance)]
-        for date in sorted(by_date):
-            running_balance += by_date[date]
-            points.append(AccountBalanceHistoryPoint(date=date, balance=running_balance))
-
-        return points
+        for account_id, account in eligible.items():
+            amounts = daily[account_id]
+            if account.opened_on is not None:
+                amounts.setdefault(account.opened_on, Decimal(0))
+            elif not amounts:
+                # Legacy accounts without an opening date or movements have one ending point.
+                amounts[min(through, account.closed_on or through)] = Decimal(0)
+            balance = Decimal(account.opening_balance)
+            for day in sorted(amounts):
+                balance += amounts[day]
+                histories[account_id].append(AccountBalanceHistoryPoint(date=day, balance=balance))
+        return histories

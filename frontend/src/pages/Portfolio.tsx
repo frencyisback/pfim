@@ -47,7 +47,7 @@ export default function Portfolio() {
     <div className="space-y-6">
       <h2 className="text-xl font-semibold">Portfolio</h2>
 
-      {summary && summary.positions_count > 0 && (
+      {summary && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <KpiCard
             label="Invested capital"

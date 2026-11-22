@@ -28,16 +28,13 @@ import { useTableSort } from "@/lib/useTableSort";
 function LiquidityMetrics({ netWorth }: { netWorth: NetWorthReport }) {
   const runway = netWorth.runway_months;
   const months = runway === null ? null : Number(runway);
-  // Conventional emergency fund thresholds: under 3 months is exposed;
-  // over 6 months is considered solid.
-  const tone =
-    months === null ? undefined : months >= 6 ? true : months < 3 ? false : undefined;
+  const coverage = netWorth.spending_coverage;
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <h3 className="mb-1 text-sm font-medium text-gray-600">Liquidity and runway</h3>
       <p className="mb-3 text-xs text-gray-400">
-        How long readily available cash would last at the spending rate of the last 12 months. Liquidity includes only checking accounts; spending excludes security purchases and transfers between your own accounts.
+        Checking account balances cover spending at the recorded monthly pace. The baseline excludes security purchases and transfers between your own accounts.
       </p>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <KpiCard
@@ -59,23 +56,31 @@ function LiquidityMetrics({ netWorth }: { netWorth: NetWorthReport }) {
           }
           formula={
             <>
-              <Formula>Σ monthly spending capped at percentiles P5–P95 ÷ 12</Formula>
-              Outflows in expense categories and uncategorised negative transactions, net of refunds in the same categories. Excludes security purchases and transfers between your own accounts. Uses the last 12 calendar months, including months without spending and the partial current month; caps extreme values before averaging.
+              <Formula>Mean of recorded monthly spending, capped at P5–P95</Formula>
+              Uses completed calendar months with recorded expense movements. Missing months and the partial month are excluded.
             </>
           }
         />
         <KpiCard
           label="Months of runway"
           value={months === null ? "—" : `${months.toFixed(1)} months`}
-          positive={tone}
           formula={
             <>
               <Formula>Available liquidity ÷ Average monthly spending</Formula>
-              How long you could manage without income. Conventionally, under 3 months is exposed and over 6 months is solid.
+              A zero or negative checking balance gives zero months when spending is known.
             </>
           }
         />
       </div>
+      <p className="mt-3 text-xs text-gray-600">
+        Spending recorded in {coverage.months_with_recorded_expenses} of 12 completed calendar months
+        {" "}({coverage.window_from} through {coverage.window_to}).
+        {coverage.months_with_recorded_expenses === 0
+          ? " No completed month supplies a spending baseline."
+          : coverage.months_with_recorded_expenses < 12 && " Limited history. The estimate reflects only months with recorded expenses."}
+        {coverage.partial_month_spending !== null &&
+          ` The partial month's recorded spending of ${formatEur(Number(coverage.partial_month_spending))} is excluded from the average.`}
+      </p>
       {months !== null && months < 3 && (
         <p className="mt-3 text-xs text-amber-700">
           Less than 3 months of coverage: an unexpected expense could require selling investments at an unfavourable time.
@@ -116,7 +121,7 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
         <h3 className="text-sm font-medium text-gray-600">Securities portfolio growth</h3>
         {years !== null && (
           <span className="text-xs text-gray-400">
-            Period: {years.toFixed(1)} years ({days} days since the first trade)
+            TWR period: {years.toFixed(1)} years ({days} days since the first trade)
           </span>
         )}
       </div>
@@ -146,7 +151,7 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
           }
         />
         <KpiCard
-          label="Annual total return"
+          label="Annualised return on open lots"
           value={pctOrDash(performance.total_return_annualized)}
           positive={
             performance.total_return_annualized === null
@@ -155,15 +160,15 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
           }
           formula={
             <>
-              <Formula>(1 + Cumulative total return)^(365 ÷ days) − 1</Formula>
-              The same calculation applied to total return.
+              <Formula>(1 + Return on open lots)^(365 ÷ days held) − 1</Formula>
+              Available when all remaining FIFO lots share an acquisition date and at least one day has elapsed.
             </>
           }
         />
       </div>
 
       <p className="mb-2 mt-4 text-xs font-medium uppercase tracking-wide text-gray-400">
-        Cumulative over the entire period
+        Cumulative measures
       </p>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <KpiCard
@@ -178,15 +183,16 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
           }
         />
         <KpiCard
-          label="Cumulative total return"
+          label="Total return on open lots"
           value={pctOrDash(performance.total_return)}
           positive={
             performance.total_return === null ? undefined : Number(performance.total_return) >= 0
           }
           formula={
             <>
-              <Formula>(Final value − Invested capital + Net income) ÷ Invested capital</Formula>
-              Includes coupons and dividends received as well as price appreciation.
+              <Formula>(Current value − Open FIFO cost + Distributions attributable to units still held) ÷ Open FIFO cost</Formula>
+              Each payment contributes only the share earned by units still held. Distributions include net coupons,
+              dividends and returned principal. This view excludes costs.
             </>
           }
         />
@@ -196,7 +202,8 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
           formula={
             <>
               <Formula>Σ net coupon and dividend amounts</Formula>
-              After withholding, converted to euros.
+              Historical coupons and dividends after withholding from holdings with a recorded purchase in that account.
+              Includes payments on holdings since sold. Principal repayments are excluded.
             </>
           }
         />
@@ -204,7 +211,9 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
 
       <p className="mt-3 text-xs text-gray-500">
         The <strong>TWR</strong> measures portfolio returns independently of when and how much capital you contributed, allowing comparison with a market index. The{" "}
-        <strong>MWR</strong> measures the return on capital as actually invested, so contribution timing matters. It is inherently an annual rate and is excluded from cumulative figures. Annual values are compound rates (CAGR), allowing comparison across different period lengths. Both include coupons and dividends received and require recorded trades and at least one reference price.
+        <strong>MWR</strong> measures the return on capital as actually invested, so contribution timing matters.
+        Both include cash distributions from holdings with a recorded purchase and use the selected income basis.
+        MWR is already annual. An open security needs a terminal valuation to calculate its MWR.
       </p>
 
       {performance.by_security.length > 0 && (
@@ -217,7 +226,7 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
                 {([
                   ["ticker", "Security", "left"],
                   ["simple", "Simple return", "right"],
-                  ["total", "Total return", "right"],
+                  ["total", "Return on open lots", "right"],
                   ["mwr", "MWR", "right"],
                   ["realized", "Realised", "right"],
                 ] as const).map(([key, label, align]) => (
@@ -306,12 +315,12 @@ export function NetWorthTab() {
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <KpiCard
-              label="Net worth"
+              label="Recorded financial wealth"
               value={formatEur(Number(netWorth.net_worth))}
               formula={
                 <>
                   <Formula>Account balances + Portfolio value</Formula>
-                  Everything you own: cash held in accounts plus the market value of securities.
+                  Balances and securities recorded in PFIM. Property and external debts are outside this figure.
                 </>
               }
             />

@@ -7,8 +7,6 @@ net-worth history (accounts + securities).
 import io
 from decimal import Decimal
 
-from app.finance.statistics import winsorized_mean
-
 
 def _make_checking(client, name="Checking Account", opening=0) -> int:
     return client.post(
@@ -174,10 +172,10 @@ def test_runway_divides_liquidity_by_average_monthly_expenses(client):
         )
 
     body = client.get("/api/v1/reports/net-worth").json()
-    # 1500 spent over an approximately 12-month window = 125/month
-    assert round(float(body["average_monthly_expenses"]), 0) == 125.0
+    assert body["spending_coverage"]["months_with_recorded_expenses"] == 3
+    assert float(body["average_monthly_expenses"]) == 500
     assert float(body["liquid_balance"]) == 4500.0
-    assert round(float(body["runway_months"]), 1) == 36.0
+    assert float(body["runway_months"]) == 9
 
 
 def test_average_expenses_uses_calendar_boundaries_and_the_as_of_cutoff(client):
@@ -186,10 +184,10 @@ def test_average_expenses_uses_calendar_boundaries_and_the_as_of_cutoff(client):
         "/api/v1/categories", json={"name": "Calendar expenses", "type": "expense"}
     ).json()["id"]
 
-    # As of 2025-08-15, the window is 2024-09-01–2025-08-15.
-    # The two outside movements protect both boundaries.
+    # As of 2025-08-15 the completed window ends July 31. August is shown separately.
     for date, amount in (
-        ("2024-08-31", -900),
+        ("2024-07-31", -900),
+        ("2024-08-01", -200),
         ("2024-09-01", -100),
         ("2025-08-15", -300),
         ("2025-08-16", -700),
@@ -207,9 +205,12 @@ def test_average_expenses_uses_calendar_boundaries_and_the_as_of_cutoff(client):
         assert response.status_code == 201
 
     body = client.get("/api/v1/reports/net-worth", params={"as_of_date": "2025-08-15"}).json()
-    expected = winsorized_mean([Decimal("100"), Decimal("300"), *([Decimal("0")] * 10)])
-
-    assert Decimal(body["average_monthly_expenses"]) == expected
+    assert Decimal(body["average_monthly_expenses"]) == 150
+    coverage = body["spending_coverage"]
+    assert coverage["window_from"] == "2024-08-01"
+    assert coverage["window_to"] == "2025-07-31"
+    assert coverage["months_with_recorded_expenses"] == 2
+    assert Decimal(coverage["partial_month_spending"]) == 300
 
 
 def test_runway_ignores_securities_purchases_and_transfers(client):
@@ -220,7 +221,7 @@ def test_runway_ignores_securities_purchases_and_transfers(client):
     other = _make_checking(client, name="Deposit")
     acc = _make_investment(client, ref)
     sec = _make_security(client, "ENI.MI")
-    recent = dt.date.today() - dt.timedelta(days=30)
+    recent = dt.date.today().replace(day=1) - dt.timedelta(days=1)
 
     cat = client.post("/api/v1/categories", json={"name": "Expenses", "type": "expense"}).json()
     client.post(
@@ -248,11 +249,8 @@ def test_runway_ignores_securities_purchases_and_transfers(client):
     )
 
     body = client.get("/api/v1/reports/net-worth").json()
-    # Only the 200 of actual expenses enter the 12 monthly values. As the
-    # sole peak among eleven zeros, P95 winsorization caps it at 90
-    # (45% of 200) and retains all twelve months in the average.
-    monthly = float(body["average_monthly_expenses"])
-    assert monthly == 7.5
+    assert Decimal(body["average_monthly_expenses"]) == 200
+    assert body["spending_coverage"]["months_with_recorded_expenses"] == 1
 
 
 def test_runway_is_null_without_expenses(client):

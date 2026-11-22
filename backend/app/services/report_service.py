@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from calendar import monthrange
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -10,14 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.finance.capital_gains import capital_gains_tax, remaining_capital_gains_tax
-from app.finance.income import yield_on_cost
+from app.finance.income import open_distribution_fractions, yield_on_cost
 from app.finance.periods import (
-    DAYS_PER_MONTH,
     DAYS_PER_YEAR,
     trailing_year_start,
 )
 from app.finance.statistics import winsorized_mean
-from app.models.transaction import Transaction
+from app.models.income_event import IncomeEvent
+from app.models.trade import Trade
+from app.models.trade_cost import TradeCost
 from app.repositories.account_repo import AccountRepository
 from app.repositories.category_repo import CategoryRepository
 from app.repositories.income_event_repo import IncomeEventRepository
@@ -56,10 +58,11 @@ from app.schemas.report import (
     SecuritiesByCurrency,
     SecuritiesByType,
     SecurityPositionItem,
+    SpendingCoverage,
     UnrealizedTaxProjection,
     UnrealizedTaxSnapshot,
 )
-from app.services.account_service import AccountService, account_is_present_on
+from app.services.account_service import AccountService
 from app.services.net_worth_composition import account_composition
 from app.services.performance_service import PerformanceService, PortfolioValuation
 from app.services.portfolio_cost_service import COST_TYPE_LABELS
@@ -78,7 +81,7 @@ def _cost_percentage(costs: Decimal | None, basis: Decimal | None) -> Decimal | 
 
 
 def withholding_eur(event) -> Decimal:
-    """Withholding on a coupon or dividend in EUR. tax_withheld uses the event's declared
+    """Withholding on a distribution in EUR. tax_withheld uses the event's declared
     currency; total_eur and net_amount_eur are already converted. Their difference is the EUR
     withholding, consistent with net_amount_eur = (total_amount - tax_withheld) * fx_rate.
     """
@@ -150,23 +153,14 @@ class ReportService:
         # values mean unknown endpoints and are included without inventing backfill dates.
         #
         all_accounts = self.account_repo.list(only_active=False)
-        accounts = [a for a in all_accounts if account_is_present_on(a, as_of_date)]
-        balances = {a.id: Decimal(a.opening_balance) for a in accounts}
-        # Sum persisted EUR amounts in Decimal, just as AccountService.get_balance does.
-        # A single read avoids one account lookup and transaction query for every row.
-        movements = self.db.execute(
-            select(Transaction.account_id, Transaction.amount_eur).where(
-                Transaction.date <= as_of_date
-            )
-        )
-        for account_id, amount_eur in movements:
-            if account_id in balances:
-                balances[account_id] += Decimal(amount_eur)
+        balances = self.account_service.balances_as_of(as_of_date, accounts=all_accounts)
 
         by_account = []
         total_accounts_balance = Decimal("0")
         liquid_balance = Decimal("0")
-        for a in accounts:
+        for a in all_accounts:
+            if a.id not in balances:
+                continue
             balance = balances[a.id]
             total_accounts_balance += balance
             # Available cash sums checking accounts only. Savings and cash accounts remain part of
@@ -176,18 +170,18 @@ class ReportService:
             by_account.append({"account_id": a.id, "name": a.name, "balance": str(balance)})
 
         trades = self.trade_repo.list(date_to=as_of_date)
-        prices = self.price_repo.list_all(date_to=as_of_date)
+        prices = list(self.price_repo.latest_by_security(as_of=as_of_date).values())
         valuation = self.performance_service.portfolio_valuations(
             [as_of_date], include_same_day_trades=True, trades=trades, prices=prices
         )[as_of_date]
         total_portfolio_value = valuation.value
 
-        avg_expenses = self._average_monthly_expenses(as_of_date)
-        runway = (
-            (liquid_balance / avg_expenses)
-            if avg_expenses and avg_expenses > 0 and liquid_balance > 0
-            else None
-        )
+        avg_expenses, coverage = self._spending_history(as_of_date)
+        runway = None
+        if avg_expenses is not None:
+            runway = max(liquid_balance, Decimal(0)) / avg_expenses
+        elif liquid_balance <= 0 and (coverage.partial_month_spending or 0) > 0:
+            runway = Decimal(0)
 
         return NetWorthReport(
             as_of_date=as_of_date,
@@ -207,53 +201,55 @@ class ReportService:
             liquid_balance=liquid_balance,
             average_monthly_expenses=avg_expenses,
             runway_months=runway,
+            spending_coverage=coverage,
             portfolio_valuation=self._portfolio_valuation_metadata(valuation.cost_fallbacks),
         )
 
-    def _average_monthly_expenses(self, as_of_date: dt.date) -> Decimal | None:
-        """Robust average expense over the latest twelve calendar months. Exclude transfers and
-        security purchases, which do not reduce net worth. Sum signed amounts before
-        converting each monthly net outflow into positive spending. Include empty months and
-        winsorize monthly totals at P5/P95 before averaging. The current month ends at
-        as_of_date. Return None when the robust average is not positive.
-        """
-        month_index = as_of_date.year * 12 + (as_of_date.month - 1) - 11
+    def _spending_history(self, as_of_date: dt.date) -> tuple[Decimal | None, SpendingCoverage]:
+        """Average only completed calendar months containing recorded expense movements."""
+        end = as_of_date
+        if end.day != monthrange(end.year, end.month)[1]:
+            end = end.replace(day=1) - dt.timedelta(days=1)
+        month_index = end.year * 12 + (end.month - 1) - 11
         start_year, zero_based_month = divmod(month_index, 12)
         start = dt.date(start_year, zero_based_month + 1, 1)
         items = self.transaction_repo.iter_filtered(date_from=start, date_to=as_of_date)
         expenses = self._economic_movements(self._filter_by_category_type(items, "expense"))
 
-        monthly: dict[tuple[int, int], Decimal] = {}
-        for offset in range(12):
-            index = month_index + offset
-            year, month = divmod(index, 12)
-            monthly[(year, month + 1)] = Decimal("0")
+        monthly: dict[tuple[int, int], Decimal] = defaultdict(Decimal)
+        partial_spending = Decimal(0)
         for transaction in expenses:
-            key = (transaction.date.year, transaction.date.month)
-            monthly[key] -= Decimal(transaction.amount_eur)
+            if transaction.date > end:
+                partial_spending -= Decimal(transaction.amount_eur)
+            else:
+                key = (transaction.date.year, transaction.date.month)
+                monthly[key] -= Decimal(transaction.amount_eur)
 
-        average = winsorized_mean(list(monthly.values()))
-        if average <= 0:
-            return None
-        return average
+        average = winsorized_mean(list(monthly.values())) if monthly else Decimal(0)
+        coverage = SpendingCoverage(
+            window_from=start,
+            window_to=end,
+            months_with_recorded_expenses=len(monthly),
+            partial_month_spending=partial_spending if end < as_of_date else None,
+        )
+        return average if average > 0 else None, coverage
 
     def income_statement(
         self, date_from: dt.date | None = None, date_to: dt.date | None = None
     ) -> IncomeStatementReport:
-        """Cash inflows and outflows, including security trades. Exclude both sides of
-        own-account transfers. Linked trade movements already include costs, so adding trades
-        or trade_costs again would double-count the same flow.
+        """Calculate cash flows from account movements and household savings from economic
+        activity. Use investment source records once, including legacy events and charges
+        for which the settlement account is unknown.
         """
         validate_date_range(date_from, date_to)
         items = self.transaction_repo.iter_filtered(date_from=date_from, date_to=date_to)
 
-        by_month: dict[str, dict] = {}
+        categories = self._categories_by_id()
+        by_month: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
         for t in items:
             if t.transfer_group_id is not None:
                 continue
             key = t.date.strftime("%Y-%m")
-            if key not in by_month:
-                by_month[key] = {"income": Decimal("0"), "expense": Decimal("0")}
             # Use amount_eur: foreign-currency movements are already converted.
             amount = Decimal(t.amount_eur)
             if amount > 0:
@@ -261,12 +257,50 @@ class ReportService:
             else:
                 by_month[key]["expense"] += amount
 
+            if t.trade_id is None and t.income_event_id is None and t.portfolio_cost_id is None:
+                category = categories.get(t.category_id)
+                is_expense = category.type == "expense" if category else amount < 0
+                if is_expense:
+                    by_month[key]["economic_spending"] -= amount
+                else:
+                    by_month[key]["economic_income"] += amount
+
+        # Read costs on their trade dates, including sales whose fees consume all
+        # proceeds and therefore have no linked cash transaction.
+        costs = select(Trade.date, TradeCost.amount_eur).join(
+            TradeCost, TradeCost.trade_id == Trade.id
+        )
+        if date_from is not None:
+            costs = costs.where(Trade.date >= date_from)
+        if date_to is not None:
+            costs = costs.where(Trade.date <= date_to)
+        for date, cost in self.db.execute(costs):
+            by_month[date.strftime("%Y-%m")]["economic_spending"] += Decimal(cost)
+
+        for charge in self.portfolio_cost_repo.list(date_from=date_from, date_to=date_to):
+            by_month[charge.date.strftime("%Y-%m")]["economic_spending"] += Decimal(
+                charge.amount_eur
+            )
+
+        for event in self.income_event_repo.list(date_from=date_from, date_to=date_to):
+            net_paid = Decimal(event.net_amount_eur)
+            if event.event_type == "return_of_capital":
+                # Only tax paid reduces household savings when principal is returned.
+                withheld = Decimal(event.total_eur) - net_paid
+                if withheld:
+                    by_month[event.payment_date.strftime("%Y-%m")]["economic_spending"] += withheld
+            elif net_paid:
+                by_month[event.payment_date.strftime("%Y-%m")]["economic_income"] += net_paid
+
         periods = []
         for key in sorted(by_month.keys()):
             income = by_month[key]["income"]
             expense = by_month[key]["expense"]
             net = income + expense
             savings_rate = (net / income * 100) if income > 0 else None
+            economic_income = by_month[key]["economic_income"]
+            economic_spending = by_month[key]["economic_spending"]
+            economic_savings = economic_income - economic_spending
             periods.append(
                 IncomeStatementPeriod(
                     period_label=key,
@@ -274,6 +308,12 @@ class ReportService:
                     total_expense=expense,
                     net=net,
                     savings_rate_pct=savings_rate,
+                    economic_income=economic_income,
+                    economic_spending=economic_spending,
+                    economic_savings=economic_savings,
+                    economic_savings_rate_pct=(
+                        economic_savings / economic_income * 100 if economic_income > 0 else None
+                    ),
                 )
             )
 
@@ -284,6 +324,9 @@ class ReportService:
         # and limit both tails without changing the original rates shown in monthly details.
         #
         average_savings_rate = winsorized_mean(savings_rates) if savings_rates else None
+        economic_income = sum((p.economic_income for p in periods), Decimal(0))
+        economic_spending = sum((p.economic_spending for p in periods), Decimal(0))
+        economic_savings = economic_income - economic_spending
 
         return IncomeStatementReport(
             period_from=date_from,
@@ -294,6 +337,12 @@ class ReportService:
             net=total_income + total_expense,
             average_savings_rate_pct=average_savings_rate,
             savings_rate_months=len(savings_rates),
+            economic_income=economic_income,
+            economic_spending=economic_spending,
+            economic_savings=economic_savings,
+            economic_savings_rate_pct=(
+                economic_savings / economic_income * 100 if economic_income > 0 else None
+            ),
         )
 
     def _categories_by_id(self) -> dict:
@@ -358,6 +407,15 @@ class ReportService:
         else:
             matched = self._economic_movements(matched)
             sign = Decimal("1")
+
+        if type_filter == "income":
+            principal = select(IncomeEvent.id).where(IncomeEvent.event_type == "return_of_capital")
+            if date_from is not None:
+                principal = principal.where(IncomeEvent.payment_date >= date_from)
+            if date_to is not None:
+                principal = principal.where(IncomeEvent.payment_date <= date_to)
+            principal_ids = set(self.db.scalars(principal))
+            matched = [t for t in matched if t.income_event_id not in principal_ids]
 
         by_category: dict[int | None, Decimal] = {}
         by_top_level_category: dict[int | None, Decimal] = {}
@@ -624,21 +682,14 @@ class ReportService:
         """
         today = dt.date.today()
         accounts = self.account_repo.list(only_active=False)
-        per_account_points = {
-            a.id: [
-                point
-                for point in self.account_service.get_balance_history(a.id)
-                if point.date <= today
-            ]
-            for a in accounts
-        }
+        per_account_points = self.account_service.balance_histories(accounts, through=today)
 
-        trades = [trade for trade in self.trade_repo.list() if trade.date <= today]
+        trades = self.trade_repo.list(date_to=today)
         traded_security_ids = {trade.security_id for trade in trades}
         prices = [
             price
-            for price in self.price_repo.list_all()
-            if price.date <= today and price.security_id in traded_security_ids
+            for price in self.price_repo.list_all(date_to=today)
+            if price.security_id in traded_security_ids
         ]
         all_dates = sorted(
             {point.date for points in per_account_points.values() for point in points}
@@ -653,17 +704,8 @@ class ReportService:
         }
         cursor = {a.id: 0 for a in accounts}
 
-        # Portfolio value completes each date's snapshot: buying securities reduces cash while
-        # changing the form of wealth, without necessarily reducing net worth.
-        #
-        #
-        # Calculate all dates in one pass. Separate queries for each date would greatly increase
-        # query count and report runtime.
-        #
-        portfolio_values, portfolio_fallbacks = (
-            self.performance_service.portfolio_value_series_details(
-                all_dates, include_same_day_trades=True
-            )
+        valuations = self.performance_service.portfolio_valuations(
+            all_dates, include_same_day_trades=True, trades=trades, prices=prices
         )
 
         result = []
@@ -678,14 +720,16 @@ class ReportService:
                     a.closed_on is None or a.closed_on >= d
                 ):
                     total += last_balance[a.id]
-            portfolio_value = portfolio_values[d]
+            valuation = valuations[d]
             result.append(
                 AccountsBalanceHistoryPoint(
                     date=d,
                     total_balance=total,
-                    portfolio_value=portfolio_value,
-                    net_worth=total + portfolio_value,
-                    portfolio_valuation=self._portfolio_valuation_metadata(portfolio_fallbacks[d]),
+                    portfolio_value=valuation.value,
+                    net_worth=total + valuation.value,
+                    portfolio_valuation=self._portfolio_valuation_metadata(
+                        valuation.cost_fallbacks
+                    ),
                 )
             )
         return result
@@ -699,9 +743,22 @@ class ReportService:
         """
         validate_date_range(date_from, date_to)
         as_of = dt.date.today()
-        events = self.income_event_repo.list(date_from=date_from, date_to=date_to)
-        trailing_events = self.income_event_repo.list(
-            date_from=trailing_year_start(as_of), date_to=as_of
+        receipts = self.income_event_repo.list(date_from=date_from, date_to=date_to)
+        returned_capital_net = sum(
+            (Decimal(e.net_amount_eur) for e in receipts if e.event_type == "return_of_capital"),
+            Decimal(0),
+        )
+        events = [e for e in receipts if e.event_type != "return_of_capital"]
+        trailing_events = [
+            e
+            for e in self.income_event_repo.list(
+                date_from=trailing_year_start(as_of), date_to=as_of
+            )
+            if e.event_type != "return_of_capital"
+        ]
+        eligible_events = {e.id: e for e in [*events, *trailing_events] if e.payment_date <= as_of}
+        fractions = open_distribution_fractions(
+            self.trade_repo.list(date_to=as_of), list(eligible_events.values())
         )
 
         def net_of(e) -> Decimal:
@@ -726,8 +783,12 @@ class ReportService:
         by_year: list[DividendYearPoint] = []
         cumulative = Decimal("0")
         previous_net: Decimal | None = None
-        for y in sorted(per_year):
-            slot = per_year[y]
+        dates = [e.payment_date for e in events]
+        start = date_from or min(dates, default=None)
+        end = date_to or max([as_of, *dates])
+        years = range(start.year, end.year + 1) if start is not None else ()
+        for y in years:
+            slot = per_year.get(y, {"gross": Decimal(0), "net": Decimal(0), "count": 0})
             cumulative += slot["net"]
             growth = (
                 (slot["net"] - previous_net) / abs(previous_net) * 100
@@ -762,10 +823,12 @@ class ReportService:
         per_security: dict[int, dict] = {}
         for e in events:
             slot = per_security.setdefault(
-                e.security_id, {"gross": Decimal("0"), "net": Decimal("0"), "count": 0}
+                e.security_id,
+                {"gross": Decimal(0), "net": Decimal(0), "open_net": Decimal(0), "count": 0},
             )
             slot["gross"] += gross_of(e)
             slot["net"] += net_of(e)
+            slot["open_net"] += net_of(e) * fractions.get(e.id, Decimal(0))
             slot["count"] += 1
 
         positions = {
@@ -775,14 +838,9 @@ class ReportService:
         for security_id, slot in per_security.items():
             security = self._securities_by_id().get(security_id)
             position = positions.get(security_id)
-            # Yield on cost: net period income divided by current cost basis, meaningful only for
-            # securities still held. Use the same function as /performance (§9.6) to keep both
-            # endpoints consistent.
-            #
-            #
             yoc = None
             if position is not None and position.total_invested_eur > 0:
-                yoc = yield_on_cost(slot["net"], position.total_invested_eur)
+                yoc = yield_on_cost(slot["open_net"], position.total_invested_eur)
             by_security.append(
                 DividendBySecurity(
                     security_id=security_id,
@@ -824,18 +882,19 @@ class ReportService:
             return security.type if security else "unknown"
 
         # --- Summary indicators ---
-        dates = [e.payment_date for e in events]
         # Dedicated inclusive window, independent of table filters.
         trailing_12m_net = sum((net_of(e) for e in trailing_events), Decimal("0"))
         total_invested = sum((p.total_invested_eur for p in positions.values()), Decimal("0"))
+        trailing_open_income = sum(
+            (net_of(e) * fractions[e.id] for e in trailing_events), Decimal(0)
+        )
         portfolio_yoc = (
-            yield_on_cost(trailing_12m_net, total_invested) if total_invested > 0 else None
+            yield_on_cost(trailing_open_income, total_invested) if total_invested > 0 else None
         )
 
         average_monthly = None
-        if dates:
-            span_days = (max(dates) - min(dates)).days
-            months = max(Decimal(span_days) / DAYS_PER_MONTH, Decimal("1"))
+        if start is not None and end >= start:
+            months = (end.year - start.year) * 12 + end.month - start.month + 1
             average_monthly = total_net / months
 
         return DividendsAnalysisReport(
@@ -844,6 +903,7 @@ class ReportService:
             total_gross=total_gross,
             total_net=total_net,
             total_tax=total_tax,
+            returned_capital_net=returned_capital_net,
             tax_incidence_pct=(total_tax / total_gross * 100) if total_gross else None,
             events_count=len(events),
             first_event_date=min(dates) if dates else None,
@@ -936,6 +996,13 @@ class ReportService:
         already_withheld = already_withheld_raw.quantize(_CENT, rounding=ROUND_HALF_UP)
         estimated_due = remaining_capital_gains_tax(net, rate, already_withheld_raw)
 
+        dividend_withholding = principal_withholding = Decimal("0")
+        for event in income_events:
+            if event.event_type == "return_of_capital":
+                principal_withholding += withholding_eur(event)
+            else:
+                dividend_withholding += withholding_eur(event)
+
         return FiscalPosition(
             capital_gains=capital_gains,
             capital_losses=capital_losses,
@@ -944,7 +1011,8 @@ class ReportService:
             gross_estimated_tax=gross_estimated,
             tax_already_withheld=already_withheld,
             estimated_tax_due=estimated_due,
-            dividend_withholding=sum((withholding_eur(e) for e in income_events), Decimal("0")),
+            dividend_withholding=dividend_withholding,
+            principal_withholding=principal_withholding,
         )
 
     def _trades_in_period(self, date_from: dt.date | None, date_to: dt.date | None) -> list:
@@ -995,7 +1063,7 @@ class ReportService:
 
         # --- Block 1: realized gross result ---
         income_gross = sum(
-            (Decimal(e.total_eur) for e in income_events if e.total_eur is not None),
+            (Decimal(e.total_eur) for e in income_events if e.event_type != "return_of_capital"),
             Decimal("0"),
         )
         realized = RealizedResult(
@@ -1003,6 +1071,14 @@ class ReportService:
             capital_losses=fiscal.capital_losses,
             net_realized=fiscal.net_capital_gain_loss,
             income_gross=income_gross,
+            returned_capital_gross=sum(
+                (
+                    Decimal(e.total_eur)
+                    for e in income_events
+                    if e.event_type == "return_of_capital"
+                ),
+                Decimal(0),
+            ),
             gross_result=fiscal.net_capital_gain_loss + income_gross,
         )
 
@@ -1053,7 +1129,7 @@ class ReportService:
                 )
             )
 
-        # Coupon/dividend withholding: always actual recorded amounts.
+        # Withholding on income and returned principal uses the recorded amounts.
         for e in income_events:
             if not e.tax_withheld:
                 continue
@@ -1165,6 +1241,11 @@ class ReportService:
         current_year_stamp_exists = any(
             cost.cost_type == "stamp_duty" and cost.date.year == today.year
             for cost in all_recurring
+        ) or any(
+            cost.cost_type == "stamp_duty"
+            for trade in all_trades
+            if trade.date.year == today.year
+            for cost in costs_by_trade.get(trade.id, [])
         )
         current_stamp_duty_estimate = None
         if includes_today and not current_year_stamp_exists:
@@ -1227,7 +1308,9 @@ class ReportService:
             tax_change = closing.estimated_tax_eur - opening.estimated_tax_eur
             projected_costs = period_costs + tax_change
             gain_change = closing.net_unrealized_eur - opening.net_unrealized_eur
-            gross_result = realized.gross_result + gain_change
+            # Recorded principal repayments do not rewrite FIFO. Include the cash leg
+            # when reconciling the change in market value across the payment.
+            gross_result = realized.gross_result + realized.returned_capital_gross + gain_change
         return UnrealizedTaxProjection(
             opening=opening,
             closing=closing,

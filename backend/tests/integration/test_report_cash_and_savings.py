@@ -8,6 +8,13 @@ import io
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import delete
+
+from app.models.income_event import IncomeEvent
+from app.models.portfolio_cost import PortfolioCost
+from app.models.transaction import Transaction
+
+from .conftest import TestingSessionLocal
 
 
 def _create(client, resource, **payload):
@@ -86,6 +93,8 @@ def test_savings_rate_average_excludes_undefined_months_and_keeps_single_values(
     assert report["savings_rate_months"] == 2
     # The ratio of totals is -50%, not the required mean of rates.
     assert Decimal(report["net"]) / Decimal(report["total_income"]) * 100 == -50
+    assert Decimal(report["economic_savings_rate_pct"]) == -50
+    assert Decimal(report["economic_savings"]) == -550
 
     february = client.get(
         "/api/v1/reports/income-statement",
@@ -93,6 +102,124 @@ def test_savings_rate_average_excludes_undefined_months_and_keeps_single_values(
     ).json()
     assert Decimal(february["average_savings_rate_pct"]) == -10
     assert february["savings_rate_months"] == 1
+
+
+def test_household_savings_exclude_principal_and_include_fees_even_on_a_zero_cash_sale(client):
+    cash = _account(client)
+    investment = _account(client, "Broker", type="investment", reference_account_id=cash)
+    security = _create(client, "securities", name="Index", ticker="IDX", type="etf", currency="EUR")
+    income = _create(client, "categories", name="Salary", type="income")
+    expense = _create(client, "categories", name="Living costs", type="expense")
+    _transaction(client, cash, income, 2000)
+    _transaction(client, cash, expense, -1000)
+    trade_fields = dict(account_id=investment, security_id=security, currency="EUR", price=100)
+    buy = _create(client, "trades", type="buy", quantity=10, date="2026-01-15", **trade_fields)
+    path = "/api/v1/reports/income-statement"
+    jan = client.get(path).json()["periods"][0]
+    assert Decimal(jan["savings_rate_pct"]) == 0
+    assert Decimal(jan["economic_savings"]) == 1000
+    assert Decimal(jan["economic_savings_rate_pct"]) == 50
+
+    _create(client, f"trades/{buy}/costs", cost_type="commission", amount=10)
+    for kind, gross, tax in [("dividend", 22, 2), ("return_of_capital", 25, 5)]:
+        _create(
+            client,
+            "income-events",
+            account_id=investment,
+            security_id=security,
+            payment_date="2026-01-20",
+            event_type=kind,
+            total_amount=gross,
+            currency="EUR",
+            tax_withheld=tax,
+        )
+    sale = _create(client, "trades", type="sell", quantity=1, date="2026-02-01", **trade_fields)
+    _create(client, f"trades/{sale}/costs", cost_type="commission", amount=100)
+    report = client.get(path).json()
+    january, february = report["periods"]
+    assert Decimal(january["economic_income"]) == 2020
+    income_report = client.get("/api/v1/reports/income-analysis").json()
+    assert Decimal(income_report["total_amount"]) == 2020
+    assert all(
+        item["category_name"] != "Principal repayment" for item in income_report["by_category"]
+    )
+    assert Decimal(january["economic_spending"]) == 1015
+    assert Decimal(january["economic_savings"]) == 1005
+    assert Decimal(february["net"]) == 0
+    assert Decimal(february["economic_savings"]) == -100
+    assert february["economic_savings_rate_pct"] is None
+    assert Decimal(report["economic_savings"]) == 905
+    assert Decimal(report["economic_savings_rate_pct"]) == Decimal(905) / 2020 * 100
+    # A date-filtered CSV includes only the loss from the zero-net sale.
+    rows = list(
+        csv.DictReader(
+            io.StringIO(client.get(path, params={"date_from": "2026-02-01", "format": "csv"}).text)
+        )
+    )
+    assert len(rows) == 1
+    assert Decimal(rows[0]["economic_spending"]) == 100
+
+
+@pytest.mark.parametrize("linked", [True, False])
+def test_household_savings_count_custody_fees_once_with_or_without_linked_cash(client, linked):
+    cash = _account(client)
+    broker = _account(client, "Broker", type="investment", reference_account_id=cash)
+    security = _create(client, "securities", name="Bond", ticker="BND", type="bond", currency="EUR")
+    event = _create(
+        client,
+        "income-events",
+        account_id=broker,
+        security_id=security,
+        payment_date="2026-01-12",
+        event_type="coupon",
+        total_amount=100,
+        currency="EUR",
+    )
+    fee = _create(
+        client,
+        "portfolio-costs",
+        account_id=broker,
+        date="2026-01-15",
+        cost_type="custody_fee",
+        amount=100,
+        currency="EUR",
+    )
+    if not linked:
+        # Older records can retain the event and charge with no recoverable cash origin.
+        with TestingSessionLocal.begin() as db:
+            db.execute(delete(Transaction).where(Transaction.income_event_id == event))
+            db.execute(delete(Transaction).where(Transaction.portfolio_cost_id == fee))
+            db.get(IncomeEvent, event).cash_account_id = None
+            db.get(PortfolioCost, fee).cash_account_id = None
+
+    report = client.get("/api/v1/reports/income-statement").json()
+    assert Decimal(report["economic_income"]) == 100
+    assert Decimal(report["economic_spending"]) == 100
+    assert Decimal(report["economic_savings"]) == 0
+    assert Decimal(report["total_income"]) == (100 if linked else 0)
+    assert Decimal(report["total_expense"]) == (-100 if linked else 0)
+
+
+@pytest.mark.parametrize(("starting", "expected"), [(4000, 3), (1000, 0), (500, 0)])
+def test_sparse_runway_uses_observed_month_and_recognises_exhausted_cash(
+    client, starting, expected
+):
+    checking = _account(client, opening_balance=starting)
+    expense = _create(client, "categories", name="Rent", type="expense")
+    _transaction(client, checking, expense, -1000, date="2026-01-05")
+    short = client.get("/api/v1/reports/net-worth", params={"as_of_date": "2026-01-06"}).json()
+    assert short["average_monthly_expenses"] is None
+    if expected:
+        assert short["runway_months"] is None
+    else:
+        assert Decimal(short["runway_months"]) == 0
+    assert short["spending_coverage"]["months_with_recorded_expenses"] == 0
+    assert Decimal(short["spending_coverage"]["partial_month_spending"]) == 1000
+    month_end = client.get("/api/v1/reports/net-worth", params={"as_of_date": "2026-01-31"}).json()
+    assert Decimal(month_end["average_monthly_expenses"]) == 1000
+    assert Decimal(month_end["runway_months"]) == expected
+    assert month_end["spending_coverage"]["months_with_recorded_expenses"] == 1
+    assert month_end["spending_coverage"]["partial_month_spending"] is None
 
 
 def test_savings_rate_average_limits_both_percentile_tails_without_changing_months(client):

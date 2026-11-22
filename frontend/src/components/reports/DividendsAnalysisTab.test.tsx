@@ -8,7 +8,7 @@ vi.mock("@/api/reports", () => ({ useDividendsAnalysis: vi.fn() }));
 
 const empty: DividendsAnalysisReport = {
   period_from: "2026-01-01", period_to: "2026-01-01", total_gross: "0", total_net: "0",
-  total_tax: "0", tax_incidence_pct: null, events_count: 0, first_event_date: null,
+  total_tax: "0", returned_capital_net: "0", tax_incidence_pct: null, events_count: 0, first_event_date: null,
   last_event_date: null, trailing_12m_net: "23", portfolio_yield_on_cost_pct: "23",
   average_monthly_net: null, by_year: [], by_month: [], by_security: [], by_security_type: [], by_event_type: [],
 };

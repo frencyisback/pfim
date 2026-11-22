@@ -11,7 +11,6 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.finance.portfolio import (
-    calculate_position,
     calculate_position_eur,
     calculate_position_native,
 )
@@ -44,12 +43,7 @@ class PortfolioService:
         for trade in self.trade_repo.list(date_to=as_of_date):
             trades_by_security[trade.security_id].append(trade)
 
-        latest_prices: dict[int, object] = {}
-        for price in self.price_repo.list_all(date_to=as_of_date):
-            # list_all is sorted by security/date: the last assignment is exactly the latest price
-            # within the cutoff.
-            latest_prices[price.security_id] = price
-        return dict(trades_by_security), latest_prices
+        return dict(trades_by_security), self.price_repo.latest_by_security(as_of=as_of_date)
 
     def _build_position(
         self,
@@ -177,7 +171,7 @@ class PortfolioService:
             position_eur = calculate_position_eur(trades)
             total_realized_eur += position_eur.realized_gain_loss
 
-            quantity = calculate_position(trades).quantity
+            quantity = position_eur.quantity
             if quantity <= 0:
                 continue
             positions_count += 1

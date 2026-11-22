@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -22,6 +22,7 @@ import {
   type ForecastRunResult,
 } from "@/api/forecasts";
 import CollapsibleTable from "@/components/common/CollapsibleTable";
+import ForecastAssumptions from "@/components/ForecastAssumptions";
 import SortableHeader from "@/components/common/SortableHeader";
 import QueryStateNotice from "@/components/common/QueryStateNotice";
 import { formatEur } from "@/lib/formatters";
@@ -45,6 +46,7 @@ export default function Forecasts() {
   const [result, setResult] = useState<ForecastRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [comparison, setComparison] = useState<ForecastCompareResult | null>(null);
   type ScenarioSortKey = "name" | "horizon";
   const scenarioSort = useTableSort<ForecastScenario, ScenarioSortKey>(
@@ -74,6 +76,7 @@ export default function Forecasts() {
 
   const [form, setForm] = useState<ForecastForm>({
     name: "",
+    base_date: todayIso(),
     horizon_years: "",
     startingNetWorthMode: "auto",
     startingNetWorthValue: "",
@@ -97,7 +100,7 @@ export default function Forecasts() {
     try {
       const scenario = await createScenario.mutateAsync({
         name: form.name.trim(),
-        base_date: todayIso(),
+        base_date: form.base_date,
         horizon_years: Number(form.horizon_years),
         parameters: {
           starting_net_worth:
@@ -171,6 +174,17 @@ export default function Forecasts() {
           onChange={(e) => setForm({ ...form, horizon_years: e.target.value })}
         />
 
+        <label className="flex items-center gap-2 text-xs text-gray-500">
+          Base date
+          <input
+            type="date"
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+            required
+            max={form.startingNetWorthMode === "auto" ? todayIso() : undefined}
+            value={form.base_date}
+            onChange={(e) => setForm({ ...form, base_date: e.target.value })}
+          />
+        </label>
         <label className="col-span-full flex flex-wrap items-center gap-2 text-xs text-gray-500">
           Starting net worth:
           <select
@@ -180,7 +194,7 @@ export default function Forecasts() {
               setForm({ ...form, startingNetWorthMode: e.target.value as "auto" | "custom" })
             }
           >
-            <option value="auto">Automatic (actual account balances + portfolio)</option>
+            <option value="auto">Automatic (accounts and portfolio on the base date)</option>
             <option value="custom">Custom amount</option>
           </select>
           {form.startingNetWorthMode === "custom" && (
@@ -201,12 +215,16 @@ export default function Forecasts() {
             The custom amount is entirely initial cash. Zero and negative values are allowed.
           </p>
         )}
+        <p className="col-span-full text-xs text-gray-500">
+          Enter monthly inflows and outflows as positive amounts or zero. Future base dates require a custom starting amount.
+        </p>
 
         <input
           type="number"
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Monthly inflows €"
           aria-label="Monthly inflows in euros"
+          min="0"
           step="0.01"
           required
           value={form.monthly_income}
@@ -217,6 +235,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Monthly outflows €"
           aria-label="Monthly outflows in euros"
+          min="0"
           step="0.01"
           required
           value={form.monthly_expenses}
@@ -228,6 +247,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Annual inflow growth %"
           aria-label="Annual inflow growth as a percentage"
+          min="-100"
           required
           value={form.income_growth_rate_annual}
           onChange={(e) => setForm({ ...form, income_growth_rate_annual: e.target.value })}
@@ -238,6 +258,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Annual outflow growth %"
           aria-label="Annual outflow growth as a percentage"
+          min="-100"
           required
           value={form.expense_growth_rate_annual}
           onChange={(e) => setForm({ ...form, expense_growth_rate_annual: e.target.value })}
@@ -249,6 +270,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Pessimistic return %"
           aria-label="Pessimistic return as a percentage"
+          min="-100"
           required
           value={form.return_pessimistic}
           onChange={(e) => setForm({ ...form, return_pessimistic: e.target.value })}
@@ -259,6 +281,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Base return %"
           aria-label="Base return as a percentage"
+          min="-100"
           required
           value={form.expected_annual_return}
           onChange={(e) => setForm({ ...form, expected_annual_return: e.target.value })}
@@ -269,6 +292,7 @@ export default function Forecasts() {
           className="rounded border border-gray-300 px-2 py-1.5 text-sm"
           placeholder="Optimistic return %"
           aria-label="Optimistic return as a percentage"
+          min="-100"
           required
           value={form.return_optimistic}
           onChange={(e) => setForm({ ...form, return_optimistic: e.target.value })}
@@ -280,7 +304,7 @@ export default function Forecasts() {
           The returns above are <strong>total returns</strong>: they already include dividends and coupons, assumed reinvested. The projection compounds annually, adding each period's savings to the portfolio.
         </p>
         <p className="col-span-full text-xs text-gray-500">
-          Starting net worth represents the base date. Each year ends on its anniversary; contributions after the preceding anniversary through the current anniversary are added at period end, without intrayear returns. Contributions on or before the base date or beyond the horizon are excluded. February 29 becomes February 28 in non-leap years.
+          This form invests positive annual cash flow at each anniversary. The API also accepts a custom monthly investment and dated contributions or withdrawals.
         </p>
 
         <button
@@ -298,6 +322,10 @@ export default function Forecasts() {
           <h3 className="mb-3 text-sm font-medium text-gray-600">
             Net worth projection — {result.scenario_name}
           </h3>
+          <section className="mb-4" aria-label="Scenario assumptions">
+            <h4 className="mb-2 text-sm font-medium">Scenario assumptions</h4>
+            <ForecastAssumptions scenario={result.scenario} result={result} />
+          </section>
           <ResponsiveContainer width="100%" height={320}>
             <AreaChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -310,6 +338,18 @@ export default function Forecasts() {
               <Area type="monotone" dataKey="Pessimistic" stroke="#ef4444" fill="#ef4444" fillOpacity={0.1} />
             </AreaChart>
           </ResponsiveContainer>
+          {Object.keys(result.scenarios.base.milestones_reached).length > 0 && (
+            <div className="mt-3">
+              <h4 className="text-sm font-medium">Base scenario milestones</h4>
+              <ul className="mt-1 text-sm text-gray-600">
+                {Object.entries(result.scenarios.base.milestones_reached).map(([amount, year]) => (
+                  <li key={amount}>
+                    {formatEur(Number(amount))} — {year === 0 ? "Reached on the base date" : `Year ${year}`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
@@ -339,32 +379,52 @@ export default function Forecasts() {
             </thead>
             <tbody>
               {scenarioSort.sortedRows.map((s) => (
-                <tr key={s.id} className="border-t border-gray-100">
-                  <td className="px-3 py-2">
-                    <input
-                      type="checkbox"
-                      aria-label={`Include ${s.name} in comparison`}
-                      checked={selectedIds.includes(s.id)}
-                      onChange={() => toggleSelected(s.id)}
-                    />
-                  </td>
-                  <td className="px-3 py-2">{s.name}</td>
-                  <td className="px-3 py-2">{s.horizon_years} years</td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      onClick={() => handleRun(s.id)}
-                      className="mr-3 text-xs text-blue-600 hover:underline"
-                    >
-                      Run
-                    </button>
-                    <button
-                      onClick={() => deleteScenario.mutate(s.id)}
-                      className="text-xs text-gray-400 hover:text-red-600"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
+                <Fragment key={s.id}>
+                  <tr className="border-t border-gray-100">
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Include ${s.name} in comparison`}
+                        checked={selectedIds.includes(s.id)}
+                        onChange={() => toggleSelected(s.id)}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      {s.name}
+                      <div className="text-xs text-gray-500">Base date {s.base_date}</div>
+                    </td>
+                    <td className="px-3 py-2">{s.horizon_years} years</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        aria-expanded={expandedId === s.id}
+                        aria-controls={`saved-assumptions-${s.id}`}
+                        onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
+                        className="mr-3 text-xs text-blue-600 hover:underline"
+                      >
+                        {expandedId === s.id ? "Hide assumptions" : "View assumptions"}
+                      </button>
+                      <button
+                        onClick={() => handleRun(s.id)}
+                        disabled={createScenario.isPending || runForecast.isPending}
+                        className="mr-3 text-xs text-blue-600 hover:underline disabled:opacity-50"
+                      >
+                        Run
+                      </button>
+                      <button
+                        onClick={() => deleteScenario.mutate(s.id)}
+                        className="text-xs text-gray-400 hover:text-red-600"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                  <tr id={`saved-assumptions-${s.id}`} hidden={expandedId !== s.id}>
+                    <td colSpan={4} className="border-t border-gray-100 bg-gray-50 px-3 py-3">
+                      {expandedId === s.id && <ForecastAssumptions scenario={s} />}
+                    </td>
+                  </tr>
+                </Fragment>
               ))}
               {scenarios?.length === 0 && (
                 <tr>
@@ -421,6 +481,18 @@ export default function Forecasts() {
                 ))}
               </LineChart>
             </ResponsiveContainer>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {comparison.results.map((run, index) => (
+              <details key={run.scenario_id} open className="rounded-lg border border-gray-200 bg-white p-3">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Assumptions — {comparisonChart.series[index].label}
+                </summary>
+                <div className="mt-3">
+                  <ForecastAssumptions scenario={run.scenario} result={run} />
+                </div>
+              </details>
+            ))}
           </div>
         </section>
       )}

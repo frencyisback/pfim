@@ -10,10 +10,11 @@ vi.mock("./TaxEventsSection", () => ({ TaxEventsSection: () => null }));
 const report: CostsAnalysisReport = {
   period_from: "2025-02-01",
   period_to: "2025-02-28",
-  realized: { capital_gains: "80", capital_losses: "0", net_realized: "80", income_gross: "0", gross_result: "80" },
+  realized: { capital_gains: "80", capital_losses: "0", net_realized: "80", income_gross: "0", returned_capital_gross: "0", gross_result: "80" },
   fiscal: {
     capital_gains: "80", capital_losses: "0", net_capital_gain_loss: "80", tax_rate_pct: "25",
     gross_estimated_tax: "20", tax_already_withheld: "0", estimated_tax_due: "20", dividend_withholding: "0",
+    principal_withholding: "0",
   },
   unrealized_tax: {
     opening: { as_of: "2025-01-31", open_positions: 1, missing_price_tickers: [], net_unrealized_eur: "20", estimated_tax_eur: "5" },
@@ -123,7 +124,7 @@ describe("Costs and Taxation", () => {
 
   it("shows the closing tax balance even when the period has no change and a zero gross result", () => {
     const result = text(renderReport({
-      realized: { capital_gains: "0", capital_losses: "0", net_realized: "0", income_gross: "0", gross_result: "0" },
+      realized: { capital_gains: "0", capital_losses: "0", net_realized: "0", income_gross: "0", returned_capital_gross: "0", gross_result: "0" },
       total_costs: "0", net_result: "0",
       unrealized_tax: {
         ...projection, opening: { ...projection.closing, as_of: projection.opening.as_of },

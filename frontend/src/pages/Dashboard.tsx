@@ -18,6 +18,7 @@ import { securityTypeLabel } from "@/lib/securityTypes";
 import KpiCard, { Formula } from "@/components/common/KpiCard";
 import QueryStateNotice from "@/components/common/QueryStateNotice";
 import { currencyYAxisProps } from "@/lib/chartScale";
+import { useTodayIso } from "@/lib/useTodayIso";
 
 /** Dashboard page: main KPIs and summary charts. Specification §7.2. */
 const ALLOCATION_COLORS = ["#0ea5e9", "#8b5cf6", "#f97316", "#22c55e", "#ec4899", "#64748b"];
@@ -67,12 +68,17 @@ function IntroPanel() {
 }
 
 export default function Dashboard() {
+  const today = useTodayIso();
+  const [year, month] = today.split("-").map(Number);
+  const months = Array.from({ length: 6 }, (_, i) =>
+    new Date(Date.UTC(year, month - 6 + i, 1)).toISOString().slice(0, 7)
+  );
   const { data: netWorth, isLoading: nwLoading, error: netWorthError } = useNetWorth();
   const {
     data: incomeStatement,
     isLoading: incomeLoading,
     error: incomeError,
-  } = useIncomeStatement();
+  } = useIncomeStatement({ from: months[0] + "-01", to: today });
   const {
     data: portfolioSummary,
     isLoading: portfolioLoading,
@@ -82,12 +88,14 @@ export default function Dashboard() {
     ? getPortfolioCostFallbackWarning(netWorth.portfolio_valuation)
     : null;
 
-  const monthlyData =
-    incomeStatement?.periods.slice(-6).map((p) => ({
-      month: p.period_label,
-      Inflows: Number(p.total_income),
-      Outflows: Math.abs(Number(p.total_expense)),
-    })) ?? [];
+  const monthlyData = incomeStatement?.periods.length ? months.map((month) => {
+    const period = incomeStatement.periods.find((p) => p.period_label === month);
+    return {
+      month,
+      Inflows: Number(period?.total_income ?? 0),
+      Outflows: Math.abs(Number(period?.total_expense ?? 0)),
+    };
+  }) : [];
 
   const allocationData = portfolioSummary
     ? Object.entries(portfolioSummary.allocation_by_type).map(([type, value]) => ({
@@ -109,18 +117,18 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard
-          label="Net worth"
-          value={nwLoading ? "..." : formatEur(Number(netWorth?.net_worth ?? 0))}
+          label="Recorded financial wealth"
+          value={netWorth ? formatEur(Number(netWorth.net_worth)) : nwLoading ? "..." : "—"}
           formula={
             <>
               <Formula>Account balances + Portfolio value</Formula>
-              Everything you own: account cash plus the market value of securities.
+              Balances and securities recorded in PFIM. Property and external debts are outside this figure.
             </>
           }
         />
         <KpiCard
           label="Account balances"
-          value={nwLoading ? "..." : formatEur(Number(netWorth?.total_accounts_balance ?? 0))}
+          value={netWorth ? formatEur(Number(netWorth.total_accounts_balance)) : nwLoading ? "..." : "—"}
           formula={
             <>
               <Formula>Σ balances of accounts present on the report date</Formula>
@@ -130,7 +138,7 @@ export default function Dashboard() {
         />
         <KpiCard
           label="Portfolio value"
-          value={nwLoading ? "..." : formatEur(Number(netWorth?.total_portfolio_value ?? 0))}
+          value={netWorth ? formatEur(Number(netWorth.total_portfolio_value)) : nwLoading ? "..." : "—"}
           formula={
             <>
               <Formula>Σ (quantity × latest price × exchange rate)</Formula>
@@ -140,8 +148,8 @@ export default function Dashboard() {
         />
         <KpiCard
           label="Unrealised gain/loss"
-          value={formatEur(Number(portfolioSummary?.total_unrealized_gain_loss ?? 0))}
-          positive={Number(portfolioSummary?.total_unrealized_gain_loss ?? 0) >= 0}
+          value={portfolioSummary ? formatEur(Number(portfolioSummary.total_unrealized_gain_loss)) : portfolioLoading ? "..." : "—"}
+          positive={portfolioSummary ? Number(portfolioSummary.total_unrealized_gain_loss) >= 0 : undefined}
           formula={
             <>
               <Formula>Current value − Acquisition cost</Formula>
@@ -167,7 +175,7 @@ export default function Dashboard() {
           <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
             <div>
               <h3 className="text-sm font-medium text-gray-600">
-                Aggregate inflows vs outflows (recent months)
+                Inflows and outflows over the last six calendar months
               </h3>
               <p className="mt-1 text-xs text-gray-400">
                 Transactions across all accounts, including security purchases and sales. Transfers between accounts are excluded.

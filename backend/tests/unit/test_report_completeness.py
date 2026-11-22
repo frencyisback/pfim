@@ -6,7 +6,6 @@ from itertools import repeat
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from app.finance.statistics import winsorized_mean
 from app.services.report_service import ReportService
 
 ROW_COUNT_OVER_LEGACY_CAP = 100_001
@@ -23,6 +22,8 @@ def _service_with_repeated_expense():
         description="Expense",
         transfer_group_id=None,
         trade_id=None,
+        income_event_id=None,
+        portfolio_cost_id=None,
     )
     service = ReportService.__new__(ReportService)
     service.transaction_repo = Mock()
@@ -33,6 +34,12 @@ def _service_with_repeated_expense():
         "complete reports must not return to capped pagination"
     )
     service._categories_cache = {}
+    service.db = Mock()
+    service.db.execute.return_value = []
+    service.income_event_repo = Mock()
+    service.income_event_repo.list.return_value = []
+    service.portfolio_cost_repo = Mock()
+    service.portfolio_cost_repo.list.return_value = []
     return service
 
 
@@ -40,10 +47,12 @@ def test_income_statement_and_average_expenses_include_rows_beyond_legacy_cap():
     service = _service_with_repeated_expense()
 
     statement = service.income_statement()
-    average = service._average_monthly_expenses(dt.date(2026, 1, 31))
+    average, coverage = service._spending_history(dt.date(2026, 1, 31))
 
     assert statement.total_expense == Decimal(-ROW_COUNT_OVER_LEGACY_CAP)
-    assert average == winsorized_mean([Decimal(ROW_COUNT_OVER_LEGACY_CAP), *([Decimal("0")] * 11)])
+    assert statement.economic_savings == -ROW_COUNT_OVER_LEGACY_CAP
+    assert average == ROW_COUNT_OVER_LEGACY_CAP
+    assert coverage.months_with_recorded_expenses == 1
 
 
 def test_category_analysis_includes_rows_beyond_legacy_cap():
