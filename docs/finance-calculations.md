@@ -253,32 +253,34 @@ so timing affects it. Read it alongside TWR, not as its replacement.
 
 ### 2.4 Annualization (CAGR)
 
-Reference: §9.5.1.
+Cumulative TWR uses the elapsed calendar days since the first trade. Its compound annual rate is
 
+```text
+annual_TWR = (1 + cumulative_TWR)^(365 / elapsed_days) − 1
 ```
-annual_return = (1 + cumulative_return)^(365 / days) − 1
+
+This calculation requires positive elapsed time, a finite cumulative return above −100% and a representable result. For example, +1000% in a single day can produce an annual rate too large to represent. The cumulative TWR remains available.
+
+**Annualized return on open FIFO lots.** Each remaining purchase has its own holding period. Group the remaining EUR acquisition cost by purchase date. For date `i`, let `C_i` be that residual cost and `d_i` the actual days from purchase to the valuation date. Find the common annual rate `r > −1` satisfying
+
+```text
+Σ C_i × (1 + r)^(d_i / 365) = quoted open value + attributable distributions − attributable purchase costs
 ```
 
-This makes periods of different lengths comparable: +20% in six months and
-+20% in five years are very different results.
+The terminal amount uses the quoted market value of the open units in EUR, plus their share of dividends, coupons and principal repayments on the selected gross/net basis (§2.1). When costs are included, subtract the portion of each purchase cost belonging to its remaining units. The calculation treats those distributions and costs as adjustments to the terminal amount. TWR follows the portfolio through time. MWR/XIRR uses the dates and amounts of actual investor cash flows.
 
-- **Days** run from the first trade for cumulative TWR. Open-lot return
-  uses the common purchase date of its remaining FIFO lots. Multiple
-  acquisition dates have no single holding period, so its annualized
-  field is unavailable.
-- It is undefined for nonpositive days, nonfinite return or
-  `cumulative_return ≤ −100%` (capital wiped out): it raises `ValueError`,
-  translated into `None` by the service.
-- Exponentiation with a noninteger exponent uses `float`; the ordinary
-  formula remains unchanged. Domain and finiteness are checked before and
-  after the power; overflow and unrepresentable values become the same
-  domain error. No arbitrary return cap is applied and zero does not
-  substitute for the result.
-- **Unavailability affects only the corresponding annualization.** A +1000%
-  cumulative return in one day exceeds the numerical capacity of the annual
-  power: the HTTP response remains valid, with that annualized field `null`
-  ("—" in the interface), while cumulative return, net worth and other
-  metrics remain available according to their own calculation requirements.
+With **€100** of remaining cost from 730 days ago, **€100** from 365 days ago and a terminal amount of **€231**, the annual rate is **10%** because €100 × 1.10² + €100 × 1.10 = €231. The cumulative return is (€231 − €200) / €200 = **15.5%**. A single purchase date gives the ordinary CAGR over that holding period. A lot acquired on the valuation date contributes its cost at a growth factor of one.
+
+The API returns the annual rate as a fraction (`0.10` for 10%). If `total_return_annualized` is null, `total_return_annualized_unavailable_reason` identifies the reason shown in the report.
+
+| Reason | Interpretation |
+|---|---|
+| `no_open_cost` | No positive acquisition cost remains in open lots. |
+| `no_elapsed_days` | All the remaining capital was invested on the valuation date. |
+| `missing_quote` | An open security has no eligible price on or before the valuation date. A FIFO estimate may still be available for its valuation. |
+| `undefined_rate` | The adjusted terminal amount gives no finite rate above −100%, or the rate cannot be represented numerically. With older lots present, the terminal amount must exceed the cost invested today. |
+
+A valid flat result is **0%**. A dash and its explanation apply to the unavailable annualized figure.
 
 ---
 

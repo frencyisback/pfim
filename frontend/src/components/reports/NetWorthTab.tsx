@@ -17,6 +17,7 @@ import QueryStateNotice from "@/components/common/QueryStateNotice";
 import CollapsibleTable from "@/components/common/CollapsibleTable";
 import SortableHeader from "@/components/common/SortableHeader";
 import { pctOrDash } from "@/components/reports/shared";
+import OpenLotAnnualReturnCard from "@/components/reports/OpenLotAnnualReturnCard";
 import { SavingsRateMetrics } from "@/components/reports/SavingsRateMetrics";
 import { NetWorthComposition } from "@/components/reports/NetWorthComposition";
 import { formatEur } from "@/lib/formatters";
@@ -150,21 +151,7 @@ function GrowthMetrics({ performance }: { performance: PortfolioPerformance }) {
             </>
           }
         />
-        <KpiCard
-          label="Annualised return on open lots"
-          value={pctOrDash(performance.total_return_annualized)}
-          positive={
-            performance.total_return_annualized === null
-              ? undefined
-              : Number(performance.total_return_annualized) >= 0
-          }
-          formula={
-            <>
-              <Formula>(1 + Return on open lots)^(365 ÷ days held) − 1</Formula>
-              Available when all remaining FIFO lots share an acquisition date and at least one day has elapsed.
-            </>
-          }
-        />
+        <OpenLotAnnualReturnCard performance={performance} />
       </div>
 
       <p className="mb-2 mt-4 text-xs font-medium uppercase tracking-wide text-gray-400">

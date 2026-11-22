@@ -9,6 +9,7 @@ import pytest
 
 from app.finance.returns import (
     annualize,
+    annualized_open_lot_return,
     money_weighted_return,
     simple_return,
     time_weighted_return,
@@ -61,6 +62,61 @@ def test_annualize_reports_unrepresentable_values_as_domain_errors(value):
 
 def test_large_but_representable_annual_return_is_not_clamped():
     assert annualize(Decimal("10"), 365) == Decimal("10")
+
+
+@pytest.mark.parametrize(
+    ("terminal", "expected"),
+    [("231", ".1"), ("171", "-.1"), ("200", "0"), ("15600", "11")],
+)
+def test_annualized_open_lots_with_different_ages(terminal, expected):
+    # 100 * (1 + r)**2 + 100 * (1 + r) = terminal, including a rate above the XIRR cap.
+    result = annualized_open_lot_return({730: Decimal(100), 365: Decimal(100)}, Decimal(terminal))
+    assert abs(result - Decimal(expected)) < Decimal("1e-8")
+
+
+def test_annualized_open_lots_reconciles_irregular_days_and_preserves_scale():
+    target_rate = Decimal(".076")
+    costs = {611: Decimal(137), 98: Decimal(211), 0: Decimal(12)}
+    terminal = sum(
+        amount * (1 + target_rate) ** (Decimal(days) / 365) for days, amount in costs.items()
+    )
+    for scale in (Decimal("0.000001"), Decimal(1), Decimal("1000000")):
+        scaled_costs = {age: amount * scale for age, amount in costs.items()}
+        result = annualized_open_lot_return(scaled_costs, terminal * scale)
+        assert abs(result - target_rate) < Decimal("1e-8")
+
+
+def test_annualized_open_lots_reproduces_single_date_cagr_and_removes_today_cost():
+    expected = annualize(Decimal(".21"), 182)
+    for costs, terminal in (
+        ({182: Decimal(100)}, 121),
+        ({182: Decimal(100), 0: Decimal(100)}, 221),
+    ):
+        rate = annualized_open_lot_return(costs, Decimal(terminal))
+        assert abs(rate - expected) < Decimal("1e-8")
+
+
+def test_annualized_open_lots_preserves_small_positive_growth_factor():
+    factor = Decimal("1e-20")
+    costs = {1: Decimal(100), 2: Decimal(100)}
+    terminal = sum(cost * factor ** (Decimal(days) / 365) for days, cost in costs.items())
+    annual = annualized_open_lot_return(costs, terminal)
+    assert abs((1 + annual) / factor - 1) < Decimal("1e-6")
+
+
+@pytest.mark.parametrize(
+    ("costs", "terminal"),
+    [
+        ({}, 100),
+        ({0: Decimal(100)}, 100),
+        ({365: Decimal(100)}, 0),
+        ({365: Decimal(100), 0: Decimal(100)}, 100),
+        ({365: Decimal(100), 0: Decimal(100)}, 90),
+    ],
+)
+def test_annualized_open_lots_rejects_undetermined_or_impossible_rate(costs, terminal):
+    with pytest.raises(ValueError):
+        annualized_open_lot_return(costs, Decimal(terminal))
 
 
 def test_simple_return_gain():

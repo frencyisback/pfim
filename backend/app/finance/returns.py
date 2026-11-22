@@ -64,6 +64,58 @@ def annualize(cumulative_return: Decimal, days: int) -> Decimal:
         raise ValueError("Annualized return cannot be represented") from exc
 
 
+def annualized_open_lot_return(cost_by_age: dict[int, Decimal], terminal_value: Decimal) -> Decimal:
+    """Find the annual rate that compounds the remaining EUR basis to the adjusted ending value.
+
+    Each purchase compounds for its own holding period. Today's purchases have a factor of
+    one at every rate, so their basis can be subtracted from both sides before solving.
+    """
+    target = terminal_value - cost_by_age.get(0, Decimal(0))
+    costs = {days: cost for days, cost in cost_by_age.items() if days > 0 and cost > 0}
+    if not costs or not target.is_finite() or target <= 0:
+        raise ValueError(
+            "A positive terminal amount and positive capital held for a day are required"
+        )
+    basis = sum(costs.values(), Decimal(0))
+    if target == basis:
+        return Decimal(0)
+    change = (target - basis) / basis
+    # In log-rate space the root lies between the two rates implied by giving
+    # all the capital the youngest or oldest lot's holding period.
+    log_growth = (
+        math.log1p(float(change)) if target >= basis / 2 else math.log(float(target / basis))
+    )
+    short = log_growth * DAYS_PER_YEAR / min(costs)
+    long = log_growth * DAYS_PER_YEAR / max(costs)
+    low, high = sorted((short, long))
+    terms = [(days / DAYS_PER_YEAR, math.log(float(cost / target))) for days, cost in costs.items()]
+    for _ in range(64):
+        mid = (low + high) / 2
+        if mid == low or mid == high:
+            break
+        # Divide by the terminal target. A single term >= 1 puts the sum above
+        # the target, so capping exponents at zero also prevents overflow.
+        ratio = math.fsum(math.exp(min(0.0, log_share + years * mid)) for years, log_share in terms)
+        if ratio >= 1:
+            high = mid
+        else:
+            low = mid
+    try:
+        log_rate = (low + high) / 2
+        # Near zero expm1 preserves small gains. Near a total loss convert the
+        # positive factor to Decimal before subtracting one to retain precision.
+        rate = (
+            Decimal(str(math.expm1(log_rate)))
+            if log_rate >= -1
+            else Decimal(str(math.exp(log_rate))) - 1
+        )
+    except OverflowError as exc:
+        raise ValueError("Annualized open-lot return cannot be represented") from exc
+    if not rate.is_finite() or rate <= -1:
+        raise ValueError("Annualized open-lot return cannot be represented")
+    return rate
+
+
 def time_weighted_return(
     starting_value: Decimal,
     ending_value: Decimal,

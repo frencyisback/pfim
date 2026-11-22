@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed — Open-lot annual return and household income statement
+
+- Portfolio Growth calculates annualized open-lot return for purchases made
+  on different dates. It uses the residual FIFO cost and holding period of
+  each purchase, plus distributions and purchase costs attributable to the
+  units still held. An unavailable rate now shows its reason.
+  [Formula and worked example](docs/finance-calculations.md#24-annualization-cagr)
+- The **Economic income** and **Economic spending** cards explain their
+  formulas on hover or keyboard focus. They identify net dividends and
+  coupons, trade and recurring portfolio costs, and tax on returned principal.
+
 ### Added — Forecast scenario details
 
 - Expand a saved scenario to see its cash flows, rates, investment rule

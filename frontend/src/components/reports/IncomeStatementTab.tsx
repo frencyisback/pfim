@@ -96,8 +96,28 @@ export function IncomeStatementTab() {
                 </>
               }
             />
-            <KpiCard label="Economic income" value={formatEur(Number(data.economic_income))} />
-            <KpiCard label="Economic spending" value={formatEur(Number(data.economic_spending))} />
+            <KpiCard
+              label="Economic income"
+              value={formatEur(Number(data.economic_income))}
+              formula={
+                <>
+                  <Formula>Ordinary income + net dividends + net coupons</Formula>
+                  Dividends and coupons count after withholding. Security sales, repayments of principal
+                  and transfers between your own accounts are excluded.
+                </>
+              }
+            />
+            <KpiCard
+              label="Economic spending"
+              value={formatEur(Number(data.economic_spending))}
+              formula={
+                <>
+                  <Formula>Ordinary expenses + trade costs + recurring portfolio costs + tax withheld on returned principal</Formula>
+                  Trade costs include recorded commissions, spreads and transaction taxes. Trade
+                  principal and transfers between your own accounts are excluded.
+                </>
+              }
+            />
             <KpiCard
               label="Economic savings"
               value={formatEur(Number(data.economic_savings))}

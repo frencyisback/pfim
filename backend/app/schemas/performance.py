@@ -11,6 +11,9 @@ from app.schemas.report import PortfolioValuationMetadata
 
 IncomeBasis = Literal["net", "gross"]
 CostBasis = Literal["exclude", "include"]
+OpenLotAnnualizationReason = Literal[
+    "no_open_cost", "no_elapsed_days", "missing_quote", "undefined_rate"
+]
 
 
 class PerformanceMetadata(BaseModel):
@@ -41,6 +44,7 @@ class PortfolioPerformance(BaseModel):
     total_current_value: Decimal
     total_return: Decimal | None
     total_return_annualized: Decimal | None = None
+    total_return_annualized_unavailable_reason: OpenLotAnnualizationReason | None = None
     time_weighted_return: Decimal | None = None
     time_weighted_return_annualized: Decimal | None = None
     # MWR/XIRR is already an annual rate by definition; do not annualize it again

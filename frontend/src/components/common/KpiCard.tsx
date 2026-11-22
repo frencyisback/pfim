@@ -10,11 +10,13 @@ export interface KpiCardProps {
   value: string;
   /** Green if true, red if false, neutral if omitted. */
   positive?: boolean;
+  /** Visible context for the value, including why a metric is unavailable. */
+  note?: string;
   /** How the number is calculated; omitted for descriptive values. */
   formula?: ReactNode;
 }
 
-export default function KpiCard({ label, value, positive, formula }: KpiCardProps) {
+export default function KpiCard({ label, value, positive, note, formula }: KpiCardProps) {
   return (
     <div
       className={`group relative rounded-lg border border-gray-200 bg-white p-3 ${
@@ -40,6 +42,7 @@ export default function KpiCard({ label, value, positive, formula }: KpiCardProp
       >
         {value}
       </div>
+      {note && <p className="mt-1 text-xs text-gray-600">{note}</p>}
 
       {formula && (
         <div

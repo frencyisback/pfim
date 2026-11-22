@@ -23,7 +23,7 @@ from app.finance.portfolio import (
     as_eur_priced,
     calculate_position_eur,
 )
-from app.finance.returns import annualize, money_weighted_return
+from app.finance.returns import annualize, annualized_open_lot_return, money_weighted_return
 from app.finance.returns import simple_return as simple_return_fn
 from app.finance.returns import time_weighted_return, total_return
 from app.repositories.income_event_repo import IncomeEventRepository
@@ -34,6 +34,7 @@ from app.repositories.trade_repo import TradeRepository
 from app.schemas.performance import (
     CostBasis,
     IncomeBasis,
+    OpenLotAnnualizationReason,
     PerformanceMetadata,
     PerformanceMetrics,
     PortfolioPerformance,
@@ -183,7 +184,7 @@ class PerformanceService:
                         f"funded_distributions_{income_basis}; trade_costs_{costs}; recurring_costs_{costs}"
                     ),
                     "money_weighted_return": f"funded_distributions_{income_basis}; trade_costs_{costs}; recurring_costs_{costs}",
-                    "total_return_annualized": "annualized_open_lots_with_common_acquisition_date",
+                    "total_return_annualized": "dated_residual_fifo_costs_compounded_to_quoted_value_plus_attributable_distributions_less_included_buy_costs",
                     "time_weighted_return_annualized": "annualized_time_weighted_return",
                 }
             )
@@ -956,7 +957,7 @@ class PerformanceService:
         total_invested = Decimal("0")
         total_current_value = Decimal("0")
         open_distributions_less_costs = Decimal("0")
-        open_buy_dates: set[dt.date] = set()
+        open_cost_by_age: dict[int, Decimal] = defaultdict(Decimal)
         fallback_securities: list[PortfolioValuationFallback] = []
 
         for security in self.security_repo.list():
@@ -983,7 +984,10 @@ class PerformanceService:
             metrics.append(result.metrics)
             position_eur = result.position
             open_distributions_less_costs += result.open_distributions_less_costs
-            open_buy_dates.update(lot.date for lot in position_eur.lots)
+            for lot in position_eur.lots:
+                cost = lot.quantity_remaining * lot.unit_cost
+                if cost > 0:
+                    open_cost_by_age[(as_of - lot.date).days] += cost
             total_invested += position_eur.total_invested
             quantity = position_eur.quantity
             if quantity > 0:
@@ -1009,7 +1013,21 @@ class PerformanceService:
                 net_dividends=open_distributions_less_costs,
             )
 
-        open_lot_days = (as_of - open_buy_dates.pop()).days if len(open_buy_dates) == 1 else None
+        open_lot_rate = None
+        open_lot_reason: OpenLotAnnualizationReason | None = None
+        if not open_cost_by_age:
+            open_lot_reason = "no_open_cost"
+        elif max(open_cost_by_age) == 0:
+            open_lot_reason = "no_elapsed_days"
+        elif fallback_securities:
+            open_lot_reason = "missing_quote"
+        else:
+            try:
+                open_lot_rate = annualized_open_lot_return(
+                    open_cost_by_age, total_current_value + open_distributions_less_costs
+                )
+            except ValueError:
+                open_lot_reason = "undefined_rate"
         period_days = self.investment_period_days(as_of=as_of)
         twr = self.portfolio_twr(
             net_of_costs=include_costs,
@@ -1023,7 +1041,8 @@ class PerformanceService:
             total_invested=total_invested,
             total_current_value=total_current_value,
             total_return=aggregate_total_return,
-            total_return_annualized=self._annualized(aggregate_total_return, open_lot_days),
+            total_return_annualized=open_lot_rate,
+            total_return_annualized_unavailable_reason=open_lot_reason,
             time_weighted_return=twr,
             time_weighted_return_annualized=self._annualized(twr, period_days),
             money_weighted_return=self.portfolio_mwr(

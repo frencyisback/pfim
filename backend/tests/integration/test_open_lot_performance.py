@@ -32,7 +32,7 @@ def _trade(client, account, security, kind, ago, quantity, price=10):
     return response.json()["id"]
 
 
-def _payment(client, account, security, ago, amount, *, kind="dividend", ex_ago=None):
+def _payment(client, account, security, ago, amount, *, kind="dividend", ex_ago=None, tax=0):
     response = client.post(
         "/api/v1/income-events",
         json=dict(
@@ -43,15 +43,19 @@ def _payment(client, account, security, ago, amount, *, kind="dividend", ex_ago=
             ex_date=_day(ex_ago) if ex_ago is not None else None,
             total_amount=amount,
             currency="EUR",
+            tax_withheld=tax,
         ),
     )
     assert response.status_code == 201, response.text
 
 
-def _performance(client, security="portfolio", include_costs=False):
+def _performance(client, security="portfolio", include_costs=False, income_basis="net"):
     response = client.get(
         f"/api/v1/performance/{security}",
-        params={"cost_basis": "include" if include_costs else "exclude"},
+        params={
+            "cost_basis": "include" if include_costs else "exclude",
+            "income_basis": income_basis,
+        },
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -100,7 +104,76 @@ def test_closed_security_and_reopened_lots_do_not_inherit_past_distributions(cli
     assert Decimal(_performance(client, a)["total_return"]) == 0
     summary = _performance(client)
     assert Decimal(summary["total_return"]) == 0
-    assert summary["total_return_annualized"] is None  # Multiple acquisition dates.
+    assert Decimal(summary["total_return_annualized"]) == 0  # Two ages and no gain.
+    assert summary["total_return_annualized_unavailable_reason"] is None
+
+
+def test_annualized_open_lot_return_uses_residual_costs_and_selected_distribution_basis(client):
+    account = _make_accounts(client)
+    sec = _make_security(client, "VINTAGES")
+    oldest = _trade(client, account, sec, "buy", 730, 20)
+    _payment(client, account, sec, 500, 80, tax=18)
+    _trade(client, account, sec, "buy", 365, 10)
+    _trade(client, account, sec, "sell", 100, 10)
+    assert (
+        client.post(
+            f"/api/v1/trades/{oldest}/costs",
+            json={
+                "cost_type": "commission",
+                "amount": 20,
+                "currency": "EUR",
+            },
+        ).status_code
+        == 201
+    )
+    # Ten units of each EUR 100 lot remain. Half the EUR 80 gross dividend
+    # (EUR 62 net) and half the original EUR 20 purchase fee are attributable.
+    for basis, costs, terminal in (
+        ("net", False, 231),
+        ("gross", False, 240),
+        ("net", True, 221),
+        ("gross", True, 230),
+    ):
+        summary = _performance(client, include_costs=costs, income_basis=basis)
+        assert summary["total_return_annualized_unavailable_reason"] is None
+        rate = Decimal(summary["total_return_annualized"])
+        assert abs(100 * (1 + rate) ** 2 + 100 * (1 + rate) - terminal) < Decimal(".00001")
+        assert Decimal(summary["total_return"]) == Decimal(terminal) / 200 - 1
+
+
+def test_annualized_open_lot_unavailable_reasons_follow_actual_holdings(client):
+    def unavailable(reason, *, include_costs=False):
+        result = _performance(client, include_costs=include_costs)
+        assert result["total_return_annualized"] is None
+        assert result["total_return_annualized_unavailable_reason"] == reason
+        return result
+
+    account = _make_accounts(client)
+    sec = _make_security(client, "OPENREASON")
+    unavailable("no_open_cost")
+    _trade(client, account, sec, "buy", 0, 10)
+    unavailable("no_elapsed_days")
+    old = _trade(client, account, sec, "buy", 365, 10)
+    # Same-day capital still contributes EUR 100 at terminal time. With
+    # EUR 100 of fees the remaining EUR 100 cannot fund a finite rate above -100%.
+    assert (
+        client.post(
+            f"/api/v1/trades/{old}/costs",
+            json={
+                "cost_type": "commission",
+                "amount": 100,
+                "currency": "EUR",
+            },
+        ).status_code
+        == 201
+    )
+    unavailable("undefined_rate", include_costs=True)
+    assert Decimal(_performance(client)["total_return_annualized"]) == 0
+    with TestingSessionLocal.begin() as db:
+        db.execute(delete(Price).where(Price.security_id == sec))
+    result = unavailable("missing_quote")
+    assert Decimal(result["total_current_value"]) == 200
+    assert result["portfolio_valuation"]["cost_fallback_used"] is True
 
 
 def test_unfunded_security_affects_neither_traded_holdings_income_nor_returns(client):

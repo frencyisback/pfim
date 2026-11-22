@@ -1749,7 +1749,12 @@ investment-account cash is shown separately under Account balances.
 
 **Available cash and runway.** Available cash sums checking balances on the snapshot date. The spending baseline uses the latest 12 completed calendar months and averages the months containing recorded expense movements after P5–P95 winsorization. A partial current month is reported separately. The UI shows the window and the observed month count, and flags limited history. Spending excludes internal transfers and security trade settlements. With a positive spending baseline, runway is `max(0, available cash) / average monthly spending`. An exhausted balance with documented positive partial-month spending also gives zero months. With no usable baseline and positive cash, the estimate is unavailable. See [calculation rules](docs/finance-calculations.md#8-robust-average-monthly-expenses-and-cash-runway).
 
-**Household savings.** Income Statement returns economic income, spending, savings and percentage for each month and for the selected period. Household savings equals economic income minus spending. The period percentage divides period savings by positive period economic income and includes months with spending but no income. Dividends/coupons count after withholding. Security purchase/sale principal, principal repayments and transfers are excluded. Trade fees, recurring expenses and withholding on returned principal reduce savings. The same figures appear in the monthly CSV.
+**Household savings.** Income Statement returns economic income, spending, savings and percentage for each month and for the selected period. The two input cards show their formulas on hover or keyboard focus.
+
+- **Economic income** = ordinary income + dividends after withholding + coupons after withholding. Security sale proceeds, principal repayments and transfers between owned accounts are excluded.
+- **Economic spending** = ordinary expenses + recorded trade costs + recurring portfolio costs + tax withheld on returned principal. Trade costs include commissions, spreads and transaction taxes. Trade principal and internal transfers are excluded.
+
+Household savings equals economic income minus economic spending. The period percentage divides period savings by positive period economic income and includes expenses from months without income. The same figures appear in the monthly CSV.
 
 The Household savings panel in Net Worth shows economic savings and the economic rate alongside the **average monthly cash surplus rate**. The latter keeps the existing API fields `average_savings_rate_pct` and `savings_rate_months`. It averages `(cash inflows + signed outflows) / cash inflows × 100` across months with positive inflows, including trade settlements. Inclusive P5/P95 winsorization caps extremes before averaging the equally weighted rates. A negative rate is valid and missing positive inflows give a null rate. The panel's filter starts with the full history and applies only to its indicators.
 
@@ -1765,8 +1770,7 @@ affected, using the metadata returned for each date (§5.4).
 
 A **"Securities portfolio growth"** section displays aggregate return
 metrics (§9.3, §9.4), divided into two blocks:
-- **Annualized** shows annual TWR, annual MWR/IRR and annualized open-lot
-  return when the remaining lots have a common acquisition date (§9.5.1).
+- **Annualized** shows annual TWR, annual MWR/IRR and the annual return on the remaining FIFO lots. The open-lot rate uses each purchase date and the corresponding residual cost (§9.5.1). When it is unavailable the panel explains which input or numerical condition prevents the calculation.
 - **Cumulative measures** shows portfolio TWR, total return on open FIFO
   lots and coupon/dividend income received across funded holdings.
 
@@ -2288,32 +2292,24 @@ performance within their respective scopes (§6.7).
 
 ### 9.5.1 Annualization (CAGR)
 
-Each **cumulative** return (TWR, Total Return) is accompanied by its
-corresponding **compound annual** rate so that periods of different lengths
-can be compared — +20% in 6 months and +20% in 5 years are very different
-results:
+Annual TWR applies the compound annual growth formula to portfolio TWR from the first recorded trade to the valuation date.
 
-```
-R_annual = (1 + R_cumulative)^(365 / period_days) - 1
+```text
+annual_TWR = (1 + cumulative_TWR)^(365 / elapsed_days) − 1
 ```
 
-The TWR period runs from the first recorded trade to today. Open-lot
-return uses the common acquisition date of its remaining FIFO lots.
-When they have multiple acquisition dates its annualized field is null.
+Annual TWR requires a positive day count, a finite cumulative TWR above −100% and a representable result. MWR/XIRR already expresses an annual rate using actual dates (§9.4).
 
-**MWR/IRR must not be annualized**: the XIRR formula (§9.4) discounts flows
-on an annual basis (`days/365`), so it already returns an annual rate.
-Annualizing it a second time would be a calculation error.
+**Annualized open-lot return** solves for the common rate `r > −1` that grows the remaining acquisition costs to their adjusted terminal value in EUR. Group FIFO cost by purchase date after processing sales and use the actual day count for each date.
 
-Annualization is undefined if the number of days is not positive, the return
-is nonfinite, or the cumulative return is ≤ -100% (capital reduced to zero).
-A power overflow or a nonfinite/unrepresentable result likewise makes only
-that metric `null` (“—” in the UI): the cumulative return, net worth, and
-other metrics remain available. For example, +1000% in one day preserves
-the cumulative return in a valid HTTP response, even without a
-representable annualized return. The formula and ordinary numerical
-behavior remain unchanged; no arbitrary percentage cap is imposed and no
-error is replaced with zero.
+```text
+Σ remaining_FIFO_cost_i × (1 + r)^(days_i / 365)
+    = quoted value of open units + attributable distributions − attributable purchase costs
+```
+
+Distributions use the selected gross/net basis and the open units’ entitlement (§9.5). Costs enter only in the cost-inclusive mode, prorated to the units still held. A portion bought on the valuation date has a growth factor of one. Equal purchase dates reduce to ordinary single-period CAGR. For €100 held for 730 days and €100 held for 365 days, a terminal €231 gives **10% annually** and **15.5% cumulatively**.
+
+`total_return_annualized` is a fraction. If it is null, `total_return_annualized_unavailable_reason` identifies no positive open cost, holdings acquired only today, a missing terminal quote, or an undefined or numerically unrepresentable rate. A defined zero return renders as 0%. [Calculation and reason codes](docs/finance-calculations.md#24-annualization-cagr)
 
 ### 9.6 Yield on Cost (YoC)
 
