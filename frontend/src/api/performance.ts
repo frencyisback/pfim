@@ -14,11 +14,14 @@ export interface PerformanceMetrics {
   total_income_received: string;
 }
 
+export type OpenLotAnnualReturnReason = "no_open_cost" | "no_elapsed_days" | "missing_quote" | "undefined_rate";
+
 export interface PortfolioPerformance {
   total_invested: string;
   total_current_value: string;
   total_return: string | null;
   total_return_annualized: string | null;
+  total_return_annualized_unavailable_reason: OpenLotAnnualReturnReason | null;
   time_weighted_return: string | null;
   time_weighted_return_annualized: string | null;
   /** MWR/XIRR is already an annual rate; do not annualise it again. */
